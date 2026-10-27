@@ -1,0 +1,25 @@
+<form class="filters" method="get" action="/">
+  <input type="hidden" name="view" value="{{ view }}">
+  <select name="account" onchange="this.form.submit()">
+    <option value="">全部平台</option>
+    {% for a in accounts %}
+    <option value="{{ a.id }}" {{ 'selected' if filters.account == a.id }}>{{ a.label }}</option>
+    {% endfor %}
+  </select>
+  <select name="course" onchange="this.form.submit()">
+    <option value="">全部课程</option>
+    {% for co in courses %}
+    <option value="{{ co.id }}" {{ 'selected' if filters.course == co.id }}>{{ co.name }}</option>
+    {% endfor %}
+  </select>
+  <select name="status" onchange="this.form.submit()">
+    <option value="open" {{ 'selected' if filters.status == 'open' }}>未完成</option>
+    <option value="done" {{ 'selected' if filters.status == 'done' }}>已完成/已提交</option>
+    <option value="ignored" {{ 'selected' if filters.status == 'ignored' }}>已忽略</option>
+    <option value="all" {{ 'selected' if filters.status == 'all' }}>全部</option>
+  </select>
+  <label class="chk">
+    <input type="checkbox" name="days7" value="true" {{ 'checked' if filters.days7 }}
+           onchange="this.form.submit()"> 未来7天
+  </label>
+</form>

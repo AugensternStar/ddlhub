@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ddlhub"
+version = "0.2.0"
+description = "本地优先的课程作业 DDL 聚合与提醒工具（仅本机运行）"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "sqlmodel>=0.0.19",
+    "apscheduler>=3.10,<4",
+    "httpx>=0.27",
+    "keyring>=25",
+    "argon2-cffi>=23",
+    "cryptography>=42",
+    "python-dotenv>=1.0",
+    "tenacity>=8.3",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "tzdata>=2024.1; platform_system == 'Windows'",
+    "winotify>=1.1; platform_system == 'Windows'",
+]
+
+[project.optional-dependencies]
+real-adapters = ["playwright>=1.45", "beautifulsoup4>=4.12"]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["ddlhub*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,57 @@
+<article id="a{{ row.a.id }}"
+         class="card {{ 'overdue' if row.is_overdue }} {{ 'pinned' if row.a.pinned }} {{ 'donerow' if row.done }}">
+  <div class="card-top">
+    <span class="course">{{ row.course_name }}</span>
+    <span class="platform">{{ row.platform }}</span>
+    {% if row.a.priority %}<span class="badge high">重要</span>{% endif %}
+    {% if row.a.status == 'submitted' %}<span class="badge submitted">平台已提交</span>{% endif %}
+    {% if row.a.local_done %}<span class="badge done">本地完成</span>{% endif %}
+    {% if row.a.local_ignored %}<span class="badge muted">已忽略</span>{% endif %}
+    {% if row.a.pinned %}<span class="badge pin">📌 置顶</span>{% endif %}
+  </div>
+  <h3 class="title">
+    {% if row.a.source_url %}
+    <a href="{{ row.a.source_url }}" target="_blank" rel="noopener noreferrer">{{ row.a.title }}</a>
+    {% else %}{{ row.a.title }}{% endif %}
+  </h3>
+  <div class="meta">
+    {% if row.a.due_at %}
+    <span class="due {{ 'red' if row.is_overdue }}">截止 {{ row.due_local }}</span>
+    <span class="remaining {{ 'red' if row.is_overdue }}">{{ row.remaining }}</span>
+    {% else %}
+    <span class="due">无截止时间</span>
+    {% endif %}
+    {% if row.a.estimated_minutes %}<span class="est">预计 {{ row.a.estimated_minutes }} 分钟</span>{% endif %}
+  </div>
+  {% if row.a.description %}<p class="desc">{{ row.a.description }}</p>{% endif %}
+  <div class="actions">
+    {% if not row.done and not row.a.local_ignored %}
+    <select class="offset-select" aria-label="提醒档位"
+            hx-post="/api/assignments/{{ row.a.id }}/offsets" hx-trigger="change"
+            hx-target="#a{{ row.a.id }}" hx-swap="outerHTML">
+      {% for v, label in [("default","提醒：默认"),("full","提醒：完整 T-7d…1h"),
+                          ("light","提醒：简约 T-1d/1h"),("urgent","提醒：冲刺 T-12h/3h/1h"),
+                          ("off","提醒：不提醒")] %}
+      <option value="{{ v }}" {{ 'selected' if row.offset_preset == v }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    {% if row.a.local_done %}
+    <button class="btn sm" hx-post="/api/assignments/{{ row.a.id }}/action" hx-vals='{"action":"undo"}'
+            hx-target="#a{{ row.a.id }}" hx-swap="outerHTML">取消完成</button>
+    {% elif row.a.status != 'submitted' %}
+    <button class="btn sm ok" hx-post="/api/assignments/{{ row.a.id }}/action" hx-vals='{"action":"done"}'
+            hx-target="#a{{ row.a.id }}" hx-swap="outerHTML">✓ 完成</button>
+    {% endif %}
+    {% if row.a.local_ignored %}
+    <button class="btn sm" hx-post="/api/assignments/{{ row.a.id }}/action" hx-vals='{"action":"unignore"}'
+            hx-target="#a{{ row.a.id }}" hx-swap="outerHTML">取消忽略</button>
+    {% else %}
+    <button class="btn sm ghost" hx-post="/api/assignments/{{ row.a.id }}/action" hx-vals='{"action":"ignore"}'
+            hx-target="#a{{ row.a.id }}" hx-swap="outerHTML">忽略</button>
+    {% endif %}
+    <button class="btn sm ghost" hx-post="/api/assignments/{{ row.a.id }}/action"
+            hx-vals='{"action":"{{ 'unpin' if row.a.pinned else 'pin' }}"}'
+            hx-target="#a{{ row.a.id }}" hx-swap="outerHTML">{{ '取消置顶' if row.a.pinned else '置顶' }}</button>
+  </div>
+</article>

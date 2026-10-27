@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDLHub · 作业时间线</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+{% block head %}{% endblock %}
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">DDL<span class="accent">Hub</span></span>
+  <nav>
+    {% for v, label, href in [
+        ("timeline", "时间线", "/?view=timeline"),
+        ("list", "列表", "/?view=list"),
+        ("calendar", "日历", "/?view=calendar"),
+        ("settings", "设置", "/settings")] %}
+    <a class="navlink {{ 'active' if view == v }}" href="{{ href }}">{{ label }}</a>
+    {% endfor %}
+  </nav>
+</header>
+{% include "_statusbar.html" %}
+<main id="content" class="container">
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

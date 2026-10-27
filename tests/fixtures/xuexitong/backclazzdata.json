@@ -1,0 +1,37 @@
+{
+  "result": 1,
+  "msg": "success",
+  "channelList": [
+    {
+      "content": {
+        "id": 900123456,
+        "cpi": 123456789,
+        "course": {
+          "data": [
+            {"id": 201234567, "name": "高等数学（下）", "teacher": "王老师"}
+          ]
+        }
+      }
+    },
+    {
+      "content": {
+        "id": 900123457,
+        "cpi": 123456789,
+        "course": {
+          "data": [
+            {"id": 201234568, "name": "数据结构", "teacher": "李老师"}
+          ]
+        }
+      }
+    },
+    {
+      "content": {
+        "id": 900123458,
+        "cpi": 123456789,
+        "course": {
+          "data": []
+        }
+      }
+    }
+  ]
+}

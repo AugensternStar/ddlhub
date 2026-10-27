@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDLHub · 访问验证</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="loginpage">
+<main class="loginbox">
+  <h1>DDL<span class="accent">Hub</span></h1>
+  <p>本服务仅限局域网内本人访问。请在地址栏使用带令牌的完整链接打开：</p>
+  <p><code>http://&lt;本机IP&gt;:{{ port }}/?token=你的令牌</code></p>
+  <p class="hint">令牌在服务端 .env 的 DDLHUB_TOKEN 中；同一 WiFi 下他人可嗅探明文 HTTP 流量，请仅在可信网络使用。</p>
+</main>
+</body>
+</html>

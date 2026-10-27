@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2 class="sectitle">平台管理</h2>
+  <p class="hint">
+    平台由你自行添加：类型来自内置适配器注册表，新增适配器文件（1 个文件 + 1 行注册）后自动出现在下拉里。
+    遇到验证码/扫码的平台，登录时会弹出有头浏览器让你人工完成一次（阶段 3 起支持真实平台）。
+    密码只存入系统钥匙串（Windows 凭据管理器），数据库与日志中不留明文。
+  </p>
+
+  {% for a in accounts %}
+  <div class="account-chip">
+    <span class="name">{{ a.label }}</span>
+    <span class="badge {{ 'ok' if a.status == 'ok' else ('warn' if a.status == 'need_relogin' else 'muted') }}">
+      {{ a.status_text }}</span>
+    <span class="lastok">{{ a.last_ok }}</span>
+    {% if a.status == 'need_relogin' %}
+    <button class="btn sm warn" hx-post="/api/accounts/{{ a.id }}/interactive-login"
+            hx-target="#statusbar" hx-swap="outerHTML"
+            onclick="pollLoginStatus({{ a.id }})">打开浏览器登录</button>
+    {% else %}
+    <button class="btn sm" hx-post="/api/sync" hx-vals='{"account_id": {{ a.id }}}'
+            hx-target="#statusbar" hx-swap="outerHTML">同步</button>
+    {% endif %}
+    {% if a.scenario_buttons %}
+    <span class="mocktools">
+      <button class="btn sm ghost" hx-post="/api/mock/mutate_due" hx-vals='{"account_id": {{ a.id }}}'
+              hx-target="#statusbar" hx-swap="outerHTML" title="下次同步把一份作业 DDL 推迟 3 天">模拟改期</button>
+      <button class="btn sm ghost" hx-post="/api/mock/add_new" hx-vals='{"account_id": {{ a.id }}}'
+              hx-target="#statusbar" hx-swap="outerHTML" title="下次同步临时新增一份作业">模拟新增</button>
+      <button class="btn sm ghost" hx-post="/api/mock/expire_session" hx-vals='{"account_id": {{ a.id }}}'
+              hx-target="#statusbar" hx-swap="outerHTML" title="下次同步提示需要重新登录">模拟会话失效</button>
+    </span>
+    {% endif %}
+    <form method="post" action="/api/accounts/{{ a.id }}/delete" class="inline"
+          onsubmit="return confirm('删除账号「{{ a.label }}」将同时删除其全部课程/作业/凭据，确定？')">
+      <button class="btn sm danger">删除</button>
+    </form>
+  </div>
+  {% else %}
+  <div class="empty small">还没有接入任何平台。用下方表单添加第一个；想离线体验可选「演示平台 (Mock)」，账号密码随意填。</div>
+  {% endfor %}
+
+  <details class="addaccount" {% if not accounts %}open{% endif %}>
+    <summary>＋ 添加平台</summary>
+    <form method="post" action="/api/accounts" class="addform">
+      <select name="adapter_key">
+        {% for k, name in adapters %}<option value="{{ k }}">{{ name }}</option>{% endfor %}
+      </select>
+      <input name="label" placeholder="备注名（如：我的学号）" required>
+      <input name="username" placeholder="用户名 / 学号" autocomplete="off">
+      <input name="password" type="password" placeholder="密码" autocomplete="new-password">
+      <button class="btn primary">保存并同步</button>
+    </form>
+  </details>
+</section>
+
+<section class="panel">
+  <h2 class="sectitle">通知渠道</h2>
+  <p class="hint">
+    提醒档位默认 T-7d / T-3d / T-1d / T-6h / T-1h（重要作业自动加 T-12h，可在每张作业卡片上覆盖）。
+    已提醒过的节点不重复轰炸；标记完成或平台已提交立即停止。逾期作业只提醒一次。
+  </p>
+  <label class="course-row">
+    <input type="checkbox" name="enabled" value="true" {{ 'checked' if channels.desktop }}
+           hx-post="/api/channels/desktop/toggle" hx-trigger="change"
+           hx-target="#channelhint" hx-swap="innerHTML">
+    <span class="cname">桌面通知（Windows Toast）</span>
+  </label>
+  <label class="course-row">
+    <input type="checkbox" name="enabled" value="true" {{ 'checked' if channels.email }}
+           hx-post="/api/channels/email/toggle" hx-trigger="change"
+           hx-target="#channelhint" hx-swap="innerHTML">
+    <span class="cname">邮件（SMTP）</span>
+    {% if not email_ready %}<span class="muted">← 未生效：请在 .env 配置 DDLHUB_SMTP_HOST/USER，授权码建议存钥匙串 ddlhub/notify/smtp</span>{% endif %}
+  </label>
+  <div id="channelhint"></div>
+</section>
+
+<section class="panel">
+  <h2 class="sectitle">课程选择</h2>
+  <p class="hint">关闭的课程：立即从时间线/列表/日历隐藏，后续同步不再抓取（数据保留，可随时恢复）。开关即时保存。</p>
+  <div id="savehint"></div>
+  {% for pc in platform_courses %}
+  <details class="courseset" open>
+    <summary>{{ pc.account.label }}（{{ pc.enabled_count }}/{{ pc.courses|length }} 门开启）</summary>
+    <div class="courselist">
+      {% for co in pc.courses %}
+      <label class="course-row">
+        <input type="checkbox" name="enabled" value="true" {{ 'checked' if co.enabled }}
+               hx-post="/api/courses/{{ co.id }}/toggle" hx-trigger="change"
+               hx-target="#savehint" hx-swap="innerHTML">
+        <span class="cname">{{ co.name }}</span>
+        {% if co.term %}<span class="muted">{{ co.term }}</span>{% endif %}
+      </label>
+      {% endfor %}
+    </div>
+  </details>
+  {% else %}
+  <div class="empty small">暂无课程。添加平台并完成一次同步后，这里会出现课程列表。</div>
+  {% endfor %}
+</section>
+{% endblock %}

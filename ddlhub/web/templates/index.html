@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+{% if not accounts %}
+<div class="empty onboarding">
+  <h2>还没有接入任何平台</h2>
+  <p>平台由你自行设置：进入「设置」选择平台类型并填写账号密码即可。</p>
+  <p><a class="btn primary" href="/settings">前往设置添加平台</a></p>
+  <p class="hint">想先离线体验？在设置页选择「演示平台 (Mock)」，账号密码随意填。</p>
+</div>
+{% else %}
+{% include "_filters.html" %}
+
+{% if view == 'calendar' %}
+<div id="calendar"></div>
+<script id="events-data" type="application/json">{{ events | tojson }}</script>
+<script src="/static/fullcalendar.global.min.js"></script>
+<script src="/static/fc.zh-cn.js"></script>
+<script src="/static/app.js"></script>
+{% elif view == 'list' %}
+{% for row in flat_rows %}{% include "_card.html" %}{% else %}
+<div class="empty">没有符合条件的作业 🎉</div>
+{% endfor %}
+{% else %}
+{% for group in groups %}
+<h2 class="datehead {{ 'overduehead' if group.overdue }}">{{ group.label }}</h2>
+{% for row in group.rows %}{% include "_card.html" %}{% endfor %}
+{% else %}
+<div class="empty">没有符合条件的作业 🎉</div>
+{% endfor %}
+{% endif %}
+{% endif %}
+{% endblock %}

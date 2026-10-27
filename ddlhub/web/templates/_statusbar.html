@@ -1,0 +1,31 @@
+<section id="statusbar" class="statusbar">
+  <div class="sb-row">
+    <span class="syncinfo">上次同步：<b>{{ last_sync_text }}</b></span>
+    <button class="btn primary"
+            hx-post="/api/sync" hx-target="#statusbar" hx-swap="outerHTML">⟳ 立即同步</button>
+    <button class="btn"
+            hx-post="/api/notify/test" hx-target="#statusbar" hx-swap="outerHTML">发送测试通知</button>
+    <a class="btn ghost" href="/settings">平台与课程设置 →</a>
+  </div>
+
+  {% if msg %}<div class="flash">{{ msg }}</div>{% endif %}
+
+  <div class="accounts">
+    {% for a in accounts %}
+    <div class="account-chip">
+      <span class="name">{{ a.label }}</span>
+      <span class="badge {{ 'ok' if a.status == 'ok' else ('warn' if a.status == 'need_relogin' else 'muted') }}">
+        {{ a.status_text }}</span>
+      <span class="lastok">{{ a.last_ok }}</span>
+      {% if a.status == 'need_relogin' %}
+      <button class="btn sm warn" hx-post="/api/accounts/{{ a.id }}/interactive-login"
+              hx-target="#statusbar" hx-swap="outerHTML"
+              onclick="pollLoginStatus({{ a.id }})">打开浏览器登录</button>
+      {% else %}
+      <button class="btn sm" hx-post="/api/sync" hx-vals='{"account_id": {{ a.id }}}'
+              hx-target="#statusbar" hx-swap="outerHTML">同步</button>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
