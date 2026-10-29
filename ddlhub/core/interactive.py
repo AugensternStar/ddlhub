@@ -67,9 +67,15 @@ class InteractiveLoginManager:
                 self._set(account_id, "failed", "账号不存在")
                 return
             cls = adapter_cls or REGISTRY.get(account.adapter_key)
-            if cls is None or not getattr(cls, "login_entry_url", ""):
-                self._set(account_id, "failed", "该平台不支持浏览器登录")
+            if cls is None:
+                self._set(account_id, "failed", "未知适配器")
                 return
+            probe = cls(c.adapter_ctx(account_id))
+            if not getattr(probe, "login_entry_url", ""):
+                probe.close()
+                self._set(account_id, "failed", "该平台未配置登录入口（自定义平台需填登录页 URL）")
+                return
+            probe.close()
             label = account.label
         except Exception as exc:
             logger.exception("interactive login setup failed")

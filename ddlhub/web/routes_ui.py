@@ -141,7 +141,6 @@ def _statusbar_ctx(container, msg: str = "") -> dict:
             "label": a.label,
             "status": a.status,
             "status_text": STATUS_TEXT.get(a.status, a.status),
-            "scenario_buttons": bool(cls and cls.scenario_buttons),
             "last_ok": format_local(a.last_ok_at, container.settings.timezone),
         })
     return {

@@ -3,7 +3,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import select
 
-from ddlhub.adapters.mock import MockAdapter
+from tests.mock_adapter import MockAdapter
 from ddlhub.core.models import Course
 from ddlhub.core.sync import sync_account
 from ddlhub.web.main import create_app

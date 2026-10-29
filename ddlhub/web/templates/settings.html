@@ -4,7 +4,7 @@
   <h2 class="sectitle">平台管理</h2>
   <p class="hint">
     平台由你自行添加：类型来自内置适配器注册表，新增适配器文件（1 个文件 + 1 行注册）后自动出现在下拉里。
-    遇到验证码/扫码的平台，登录时会弹出有头浏览器让你人工完成一次（阶段 3 起支持真实平台）。
+    遇到验证码/扫码的平台，登录时会弹出有头浏览器让你人工完成一次。
     密码只存入系统钥匙串（Windows 凭据管理器），数据库与日志中不留明文。
   </p>
 
@@ -22,16 +22,6 @@
     <button class="btn sm" hx-post="/api/sync" hx-vals='{"account_id": {{ a.id }}}'
             hx-target="#statusbar" hx-swap="outerHTML">同步</button>
     {% endif %}
-    {% if a.scenario_buttons %}
-    <span class="mocktools">
-      <button class="btn sm ghost" hx-post="/api/mock/mutate_due" hx-vals='{"account_id": {{ a.id }}}'
-              hx-target="#statusbar" hx-swap="outerHTML" title="下次同步把一份作业 DDL 推迟 3 天">模拟改期</button>
-      <button class="btn sm ghost" hx-post="/api/mock/add_new" hx-vals='{"account_id": {{ a.id }}}'
-              hx-target="#statusbar" hx-swap="outerHTML" title="下次同步临时新增一份作业">模拟新增</button>
-      <button class="btn sm ghost" hx-post="/api/mock/expire_session" hx-vals='{"account_id": {{ a.id }}}'
-              hx-target="#statusbar" hx-swap="outerHTML" title="下次同步提示需要重新登录">模拟会话失效</button>
-    </span>
-    {% endif %}
     <form method="post" action="/api/accounts/{{ a.id }}/delete" class="inline"
           onsubmit="return confirm('删除账号「{{ a.label }}」将同时删除其全部课程/作业/凭据，确定？')">
       <button class="btn sm danger">删除</button>
@@ -44,15 +34,20 @@
   <details class="addaccount" {% if not accounts %}open{% endif %}>
     <summary>＋ 添加平台</summary>
     <form method="post" action="/api/accounts" class="addform">
-      <select name="adapter_key">
+      <select name="adapter_key" onchange="document.getElementById('custom-extra').style.display = this.value==='custom' ? 'flex':'none'">
         {% for k, name in adapters %}<option value="{{ k }}">{{ name }}</option>{% endfor %}
       </select>
       <input name="label" placeholder="备注名（如：我的学号）" required>
       <input name="username" placeholder="用户名 / 学号" autocomplete="off">
-      <input name="password" type="password" placeholder="密码" autocomplete="new-password">
-      <button class="btn primary">保存并同步</button>
+      <input name="password" type="password" placeholder="密码（可选，可留空在浏览器里登录）" autocomplete="new-password">
+      <button class="btn primary">保存并登录</button>
     </form>
-  </details>
+    <div id="custom-extra" class="addform" style="display:none; flex-direction:column; gap:6px;">
+      <input name="entry_url" placeholder="自定义平台 · 登录页 URL（必填，如 https://xxx.edu.cn/login）" style="width:100%">
+      <input name="cookie_domain" placeholder="Cookie 域（可留空，自动取登录页域名）" style="width:100%">
+      <input name="portal_url" placeholder="门户 URL（可留空，用于会话失效检测）" style="width:100%">
+      <span class="hint">自定义平台目前支持：登录 + 会话加密保活 + 失效提醒；作业自动抓取需要为该平台开发适配器（见 docs/ADAPTER-GUIDE.md）。</span>
+    </div>
 </section>
 
 <section class="panel">

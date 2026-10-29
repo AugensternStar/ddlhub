@@ -52,11 +52,22 @@ class Container:
         return SettingKV(self.db, f"a{account_id}")
 
     def adapter_ctx(self, account_id: int):
-        from ..adapters.base import AdapterContext
+        import json
 
+        from ..adapters.base import AdapterContext
+        from .models import Account
+
+        config: dict = {}
+        with self.db.session() as s:
+            acc = s.get(Account, account_id)
+            if acc is not None and acc.config_json:
+                try:
+                    config = json.loads(acc.config_json)
+                except json.JSONDecodeError:
+                    config = {}
         return AdapterContext(
             log=self.logger, kv=self.kv_for(account_id),
-            sessions=self.sessions_for(account_id),
+            sessions=self.sessions_for(account_id), config=config,
         )
 
     def active_channels(self) -> dict[str, "NotifierBase"]:
@@ -71,9 +82,3 @@ class Container:
             for key, notifier in build_notifiers(self.settings).items()
             if enabled.get(key) and notifier.available()
         }
-
-    def mock_scenario(self, account_id: int, flag: str) -> None:
-        kv = self.kv_for(account_id)
-        sc = kv.get("mock.scenario") or {}
-        sc[flag] = True
-        kv.set("mock.scenario", sc)

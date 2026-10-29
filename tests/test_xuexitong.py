@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from ddlhub.adapters.base import AdapterContext, Credentials
-from ddlhub.adapters.mock import MockAdapter
+from tests.mock_adapter import MockAdapter
 from ddlhub.adapters.xuexitong import (
     XuexitongAdapter,
     parse_backclazzdata,

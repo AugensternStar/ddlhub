@@ -23,6 +23,7 @@ class Account(SQLModel, table=True):
     status: str = Field(default="ok", max_length=16)  # ok | need_relogin | disabled
     last_ok_at: Optional[NaiveDatetime] = None
     last_error: str = Field(default="", max_length=2000)
+    config_json: Optional[str] = Field(default=None, sa_column=Column(Text))  # 自定义平台配置
     created_at: NaiveDatetime
 
 

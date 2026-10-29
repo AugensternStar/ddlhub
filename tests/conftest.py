@@ -6,6 +6,7 @@ import uuid as uuidlib
 
 import pytest
 
+import tests.mock_adapter  # noqa: F401  在测试进程注册测试桩
 from ddlhub.adapters import discover
 from ddlhub.config import Settings
 from ddlhub.core.db import Database

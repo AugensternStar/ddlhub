@@ -5,8 +5,9 @@
 """
 from __future__ import annotations
 
+import json
 import uuid as uuidlib
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
@@ -23,14 +24,6 @@ from ..core.interactive import LoginState
 from .routes_ui import Row, _build_row, _statusbar_ctx, container_of
 
 router = APIRouter()
-
-_MOCK_FLAGS = {"mutate_due", "add_new", "expire_session"}
-_MOCK_FLAG_TEXT = {
-    "mutate_due": "已标记「模拟改期」：下次同步会把「红黑树分析报告」的 DDL 推迟 3 天",
-    "add_new": "已标记「模拟新增」：下次同步会临时新增一份作业",
-    "expire_session": "已标记「模拟会话失效」：下次同步将提示需要重新登录",
-}
-
 
 def _statusbar(request: Request, msg: str = ""):
     c = container_of(request)
@@ -92,10 +85,34 @@ def create_account(
     label: str = Form(...),
     username: str = Form(""),
     password: str = Form(""),
+    entry_url: str = Form(""),
+    cookie_domain: str = Form(""),
+    portal_url: str = Form(""),
 ):
     c = container_of(request)
     if adapter_key not in REGISTRY:
         return RedirectResponse("/?msg=" + quote("未知平台类型"), status_code=303)
+    config_json = None
+    if adapter_key == "custom":
+        entry_url = entry_url.strip()
+        if not entry_url.startswith(("http://", "https://")):
+            return RedirectResponse("/?msg=" + quote("自定义平台需要填写正确的登录页 URL（http/https）"), status_code=303)
+        host = urlsplit(entry_url).netloc.split(":")[0]
+        parts = host.split(".")
+        second_level = {"edu.cn", "com.cn", "org.cn", "net.cn", "gov.cn", "ac.cn"}
+        if cookie_domain.strip():
+            cookie_domain = cookie_domain.strip()
+        elif len(parts) > 2 and ".".join(parts[-2:]) in second_level:
+            cookie_domain = "." + ".".join(parts[-3:])
+        elif len(parts) > 2:
+            cookie_domain = "." + ".".join(parts[-2:])
+        else:
+            cookie_domain = host
+        config_json = json.dumps({
+            "entry_url": entry_url,
+            "cookie_domain": cookie_domain,
+            "portal_url": portal_url.strip(),
+        }, ensure_ascii=False)
     account_uuid = str(uuidlib.uuid4())
     hint = ""
     if username or password:
@@ -109,6 +126,7 @@ def create_account(
         acc = Account(
             uuid=account_uuid, adapter_key=adapter_key, label=label[:128],
             username_hint=hint, status="ok", created_at=now_utc(),
+            config_json=config_json,
         )
         s.add(acc)
         s.commit()
@@ -185,8 +203,11 @@ def interactive_login(aid: int, request: Request):
         cls = REGISTRY.get(account.adapter_key) if account else None
     if account is None or cls is None:
         return _statusbar(request, "账号不存在或未知平台")
-    if not getattr(cls, "login_entry_url", ""):
-        return _statusbar(request, "该平台不支持浏览器登录")
+    probe = cls(c.adapter_ctx(aid))
+    if not getattr(probe, "login_entry_url", ""):
+        probe.close()
+        return _statusbar(request, "该平台未配置登录入口（自定义平台需填登录页 URL）")
+    probe.close()
     if not c.interactive:
         return _statusbar(request, "有头登录组件未就绪（服务启动方式异常）")
     c.interactive.start(aid)
@@ -269,17 +290,6 @@ def channel_toggle(key: str, request: Request, enabled: str | None = Form(None))
     state = "开启" if on else "关闭"
     return c.templates.TemplateResponse(request, "_saved_hint.html",
                                         {"name": f"通知渠道 {key}", "state": state})
-
-
-# ---------- Mock 演示场景 ----------
-
-@router.post("/api/mock/{flag}")
-def mock_flag(flag: str, request: Request, account_id: int = Form(...)):
-    c = container_of(request)
-    if flag not in _MOCK_FLAGS:
-        return PlainTextResponse("bad flag", status_code=400)
-    c.mock_scenario(account_id, flag)
-    return _statusbar(request, _MOCK_FLAG_TEXT[flag])
 
 
 # ---------- 通知 ----------

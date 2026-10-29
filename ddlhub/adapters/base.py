@@ -80,6 +80,7 @@ class AdapterContext:
     http: Optional[object] = None            # 阶段3：复用会话 cookie 的 httpx 工厂
     headed_browser: Optional[object] = None  # 阶段3：有头浏览器工厂（内存态 context）
     limiter: Optional[object] = None         # 请求间随机 1-3s 限速器
+    config: Optional[dict] = None            # 账号级配置（自定义平台的 URL 等）
 
 
 class BaseAdapter(ABC):
@@ -88,7 +89,6 @@ class BaseAdapter(ABC):
     capabilities: ClassVar[Capability] = Capability.INTERACTIVE
     supports_2fa: ClassVar[bool] = False
     fetch_interval: ClassVar[timedelta] = timedelta(minutes=10)  # 红线：自动抓取 >=10min
-    scenario_buttons: ClassVar[bool] = False  # Mock 专用演示开关，真实平台恒为 False
     # 登录模式：credentials=账密可程序化登录；interactive=弹有头浏览器人工登录一次
     login_mode: ClassVar[str] = "credentials"
     login_entry_url: ClassVar[str] = ""  # interactive 模式的登录页

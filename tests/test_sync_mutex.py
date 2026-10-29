@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from sqlmodel import select
 
-from ddlhub.adapters.mock import MockAdapter
+from tests.mock_adapter import MockAdapter
 from ddlhub.core.models import SyncRun
 from ddlhub.core.sync import sync_account
 
