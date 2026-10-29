@@ -20,14 +20,14 @@ def _draft(lid="HW1", title="作业一", due=None):
 
 
 def _upsert(db, acc, cid, drafts, container, notify_new=True):
+    """outbox 流程：upsert 在业务事务内写 pending claim，随后 send_pending 统一发送。"""
     stats = upsert_assignments(
-        db, acc.id, cid, "C1", drafts, "Asia/Shanghai", notify_new=notify_new
+        db, acc.id, cid, "C1", drafts, "Asia/Shanghai", notify_new=notify_new,
+        channel_names=["desktop"],
     )
-    for summary, aid, dedupe_key in stats.notifications:
-        dispatch_notification(
-            container, kind="change", dedupe_key=dedupe_key,
-            assignment_id=aid, summary=summary,
-        )
+    from ddlhub.core.reminders import send_pending
+
+    send_pending(container)
     return stats
 
 
@@ -81,16 +81,17 @@ def test_same_change_not_renotified(container, db, mock_account):
     assert len(_notifs(db)) == 1  # 同一变更重放不重发
 
 
-def test_a_b_a_renotifies_documented_limitation(container, db, mock_account):
+def test_a_b_a_notifies_each_flip(container, db, mock_account):
     with db.session() as s:
         acc = s.get(Account, mock_account)
     cid = _course(db, acc)
     base = datetime(2026, 4, 1, 8, 0, tzinfo=SH)
     moved = base + timedelta(days=2)
-    for i, due in enumerate((base, moved, base)):
+    for i, due in enumerate((base, moved, base, moved)):
         _upsert(db, acc, cid, [_draft(due=due)], container, notify_new=i > 0)
-    # 已知限制（设计 §14.2）：A→B→A 会再次通知（due_at_prev 只留一版）
-    assert len(_notifs(db)) == 2
+    # 修复 R-P2-4（时间戳键）：A→B→A→B 三次翻转全部通知
+    # （旧实现第二次 B 与第一次 B 同 digest 同键，会被静默吞掉——只剩 2 条）
+    assert len(_notifs(db)) == 3
 
 
 def test_title_and_due_merged_into_one(container, db, mock_account):

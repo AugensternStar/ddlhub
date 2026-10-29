@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+import ipaddress
+import os
 from urllib.parse import urlsplit
 
 from .base import (
@@ -57,7 +59,27 @@ class CustomAdapter(BaseAdapter):
 
     # —— 契约 ——
 
+    def _assert_public_url(self, url: str) -> None:
+        """SEC-03：默认拒绝环回/私网/链路本地目标（LAN 令牌持有者可借服务端探测内网）。
+
+        仅校验字面主机名与 IP 字面量；域名解析型 rebinding 需 DDLHUB_ALLOW_PRIVATE_URL=1
+        显式放行或由网络层兜底（审计报告 §3.2 已注明该限制）。
+        """
+        if os.getenv("DDLHUB_ALLOW_PRIVATE_URL", "0") == "1":
+            return
+        host = (urlsplit(url).hostname or "").lower()
+        if host == "localhost" or host.endswith(".localhost"):
+            raise RuntimeError(f"自定义平台地址被拒绝：{host} 指向本机（安全策略）")
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return  # 域名：不做 DNS 解析（限制见 docstring）
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast):
+            raise RuntimeError(f"自定义平台地址被拒绝：{ip} 为内网/保留地址（安全策略）")
+
     def login(self, cred: Credentials) -> LoginResult:
+        self._assert_public_url(self.login_entry_url)  # SEC-03：登录前校验
         return LoginResult(
             ok=False, needs_interactive=True,
             message="自定义平台将在弹出的浏览器中打开你配置的登录页，完成登录后会话加密保存",
@@ -68,6 +90,10 @@ class CustomAdapter(BaseAdapter):
         portal = cfg.get("portal_url") or self.login_entry_url
         if not portal:
             return Health(ok=False, need_relogin=True, detail="未配置登录入口")
+        try:
+            self._assert_public_url(portal)
+        except RuntimeError as exc:
+            return Health(ok=False, need_relogin=False, detail=str(exc))
         return self.generic_health(portal)
 
     def fetch_courses(self):

@@ -59,7 +59,8 @@ def parse_backclazzdata(data: dict) -> list[CourseDraft]:
         class_id = str(content.get("id") or "").strip()
         course_id = str(c0.get("id") or "").strip()
         name = (c0.get("name") or "").strip()
-        if not class_id or not course_id or not name:
+        # SEC-07：id 仅允许数字——防平台异常响应把参数/片段注入导航 URL
+        if not (class_id.isdigit() and course_id.isdigit()) or not name:
             continue
         drafts.append(CourseDraft(
             source_id=class_id,
@@ -220,6 +221,7 @@ class XuexitongAdapter(BaseAdapter):
             raise RuntimeError(f"课程「{name}」未出现在空间页（可能已结束或被隐藏）")
 
         home_url_before = self._home.url
+        owns_page = True  # 是否拥有 cp 的关闭权（同页回退时为 False，R-P1-1）
         try:
             with self._pw_ctx.expect_page(timeout=15000) as pop:
                 card.click()
@@ -229,6 +231,7 @@ class XuexitongAdapter(BaseAdapter):
             self._home.wait_for_timeout(1500)
             if self._home.url != home_url_before:
                 cp = self._home
+                owns_page = False  # 共享空间页，绝不 close
             else:
                 raise RuntimeError(f"课程「{name}」点击后未跳转（页面可能改版）")
         try:
@@ -246,7 +249,8 @@ class XuexitongAdapter(BaseAdapter):
             except Exception:
                 continue
         if not clicked:
-            cp.close()
+            if owns_page:
+                cp.close()
             raise RuntimeError(f"课程「{name}」页面未找到作业入口（页面可能改版）")
         cp.wait_for_timeout(3000)
 
@@ -260,9 +264,11 @@ class XuexitongAdapter(BaseAdapter):
                 html = c
                 break
         if html is None:
-            cp.close()
+            if owns_page:
+                cp.close()
             raise RuntimeError(f"课程「{name}」作业列表未渲染（页面可能改版）")
-        cp.close()
+        if owns_page:
+            cp.close()
 
         drafts = parse_work_list_html(
             html, course.source_id, course.url,

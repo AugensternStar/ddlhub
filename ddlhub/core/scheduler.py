@@ -52,12 +52,30 @@ def start_scheduler(container) -> BackgroundScheduler:
         id="retention", max_instances=1, coalesce=True, misfire_grace_time=3600,
     )
 
+    sweep_stale_runs(container)
     sched.start()
     logger.info(
         "调度器已启动：每日同步 %s，启动补漏 3s 后执行，通知重试每 5 分钟",
         ",".join(settings.sync_times),
     )
     return sched
+
+
+def sweep_stale_runs(container) -> None:
+    """R-P2-1 收尾：上次进程中断留下的 running → failed（避免假 success 与群发误判）。"""
+    from sqlalchemy import update as _sa_update
+
+    try:
+        with container.db.session() as s:
+            s.execute(
+                _sa_update(SyncRun)
+                .where(SyncRun.status == "running")
+                .values(status="failed", finished_at=now_utc(),
+                        error_summary="进程中断（启动清扫）")
+            )
+            s.commit()
+    except Exception:
+        logger.exception("stale running sweep failed")
 
 
 def _sync_job(container, trigger: str) -> None:

@@ -1,7 +1,8 @@
-"""提醒纯函数 + 通知 claim-then-send 状态机（设计 §8）。
+"""提醒纯函数 + 通知 outbox（claim → pending → send_pending）。
 
-状态机：UNIQUE(dedupe_key, channel) 先 claim（pending）再发送 → sent/failed；
-补发护栏：同作业错过多节点只发最近 1 个；overdue 双护栏；pending>5min 重claim；attempts>=3 停。
+状态机：UNIQUE(dedupe_key, channel) 先写 pending（与业务变更同事务，R-P2-3 outbox），
+send_pending 统一发送 → sent/failed；崩溃残留 pending 由 requeue_stale 兜底。
+补发护栏：同作业错过多节点只发最近 1 个；overdue 双护栏；attempts>=3 停。
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from sqlmodel import select
 
 from .models import Assignment, NotificationLog
 from .normalize import format_local, now_utc, remaining_text
+from .upsert import _claim_pending
 
 if TYPE_CHECKING:
     from .runtime import Container
@@ -83,6 +85,84 @@ def overdue_node(a: Assignment, now: datetime, max_past_days: int = 7) -> int | 
 _KIND_LABEL = {"reminder": "作业提醒", "change": "DDL 变更", "overdue": "作业逾期", "test": "测试通知"}
 
 
+def claim_notification(
+    container: "Container",
+    *,
+    kind: str,
+    dedupe_key: str,
+    assignment_id: int | None = None,
+    minutes_before: int | None = None,
+    summary: str = "",
+) -> list[int]:
+    """outbox：写 pending 声明（UNIQUE(dedupe_key, channel) 防重）；发送由 send_pending 统一做。"""
+    now = now_utc()
+    channels = container.active_channels()
+    claimed: list[int] = []
+    with container.db.session() as s:
+        for name in channels:
+            dup = s.exec(
+                select(NotificationLog).where(
+                    NotificationLog.dedupe_key == dedupe_key,
+                    NotificationLog.channel == name,
+                )
+            ).first()
+            if dup:
+                continue
+            try:
+                with s.begin_nested():
+                    row = NotificationLog(
+                        assignment_id=assignment_id, channel=name, kind=kind,
+                        minutes_before=minutes_before, dedupe_key=dedupe_key,
+                        status="pending", summary=summary[:1000], created_at=now,
+                    )
+                    s.add(row)
+                s.flush()
+                claimed.append(row.id)
+            except Exception:
+                continue  # R-P2-6：并发撞 UNIQUE，已被他方 claim
+        s.commit()
+    return claimed
+
+
+def send_pending(container: "Container", ids: list[int] | None = None) -> int:
+    """发送所有（或指定 id 的）pending 通知（outbox 消费端）。
+
+    崩溃残留的 pending 由 requeue_stale 兜底，因此「落 claim」与「发送」之间可以安全崩溃。
+    """
+    channels = container.active_channels()
+    if not channels:
+        return 0
+    sent = 0
+    with container.db.session() as s:
+        stmt = select(NotificationLog).where(NotificationLog.status == "pending")
+        if ids is not None:
+            stmt = stmt.where(NotificationLog.id.in_(ids))
+        rows = s.exec(stmt).all()
+        for row in rows:
+            notifier = channels.get(row.channel)
+            if notifier is None:
+                continue  # 渠道未启用/不可用：留在 pending，启用后续发
+            url = None
+            if row.assignment_id:
+                a = s.get(Assignment, row.assignment_id)
+                url = a.source_url if a else None
+            result = notifier.send(
+                f"DDLHub：{_KIND_LABEL.get(row.kind, row.kind)}", row.summary, url
+            )
+            row.attempts += 1
+            row.status = "sent" if result.ok else "failed"
+            row.error = result.error
+            row.sent_at = now_utc() if result.ok else None
+            if result.ok:
+                sent += 1
+            else:
+                container.logger.warning(
+                    "notification %s via %s failed: %s", row.id, row.channel, result.error
+                )
+        s.commit()
+    return sent
+
+
 def dispatch_notification(
     container: "Container",
     *,
@@ -93,77 +173,41 @@ def dispatch_notification(
     summary: str = "",
     url: str | None = None,
 ) -> int:
-    """claim-then-send。返回本次成功发送的渠道数。并发/重复调用由 UNIQUE 约束挡住。"""
-    now = now_utc()
-    channels = container.active_channels()
-    claimed: list[tuple[int, str, object]] = []
-    with container.db.session() as s:
-        for name, notifier in channels.items():
-            dup = s.exec(
-                select(NotificationLog).where(
-                    NotificationLog.dedupe_key == dedupe_key,
-                    NotificationLog.channel == name,
-                )
-            ).first()
-            if dup:
-                continue
-            row = NotificationLog(
-                assignment_id=assignment_id,
-                channel=name,
-                kind=kind,
-                minutes_before=minutes_before,
-                dedupe_key=dedupe_key,
-                status="pending",
-                summary=summary[:1000],
-                created_at=now,
-            )
-            s.add(row)
-            s.flush()
-            claimed.append((row.id, name, notifier))
-        s.commit()
-
-    sent = 0
-    if claimed:
-        title = f"DDLHub：{_KIND_LABEL.get(kind, kind)}"
-        with container.db.session() as s:
-            for rid, name, notifier in claimed:
-                row = s.get(NotificationLog, rid)
-                result = notifier.send(title, summary, url)
-                row.attempts += 1
-                row.status = "sent" if result.ok else "failed"
-                row.error = result.error
-                row.sent_at = now_utc() if result.ok else None
-                if result.ok:
-                    sent += 1
-                else:
-                    container.logger.warning(
-                        "notification %s via %s failed: %s", rid, name, result.error
-                    )
-            s.commit()
-    return sent
+    """claim + 立即发送（outbox：先落 pending 再发，崩溃残留由 requeue_stale 续发）。"""
+    claimed = claim_notification(
+        container, kind=kind, dedupe_key=dedupe_key, assignment_id=assignment_id,
+        minutes_before=minutes_before, summary=summary,
+    )
+    return send_pending(container, claimed)
 
 
 def requeue_stale(container: "Container", older_than_minutes: int = 5, max_attempts: int = 3) -> int:
-    """崩溃残留 pending（>5min）与 failed（attempts<3）重试发送。"""
-    now = now_utc()
-    cutoff = now - timedelta(minutes=older_than_minutes)
+    """重试 failed（attempts<3）+ 发送全部 pending（崩溃残留的 outbox 行）。"""
     channels = container.active_channels()
     if not channels:
         return 0
     sent = 0
     with container.db.session() as s:
-        rows = s.exec(
+        pending_rows = s.exec(
+            select(NotificationLog).where(NotificationLog.status == "pending")
+        ).all()
+        failed_rows = s.exec(
             select(NotificationLog).where(
-                NotificationLog.status.in_(["pending", "failed"]),
+                NotificationLog.status == "failed",
                 NotificationLog.attempts < max_attempts,
-                NotificationLog.created_at < cutoff,
             )
         ).all()
-        for row in rows:
+        for row in pending_rows + failed_rows:
             notifier = channels.get(row.channel)
             if notifier is None:
                 continue  # 渠道当前不可用，留给下轮
-            result = notifier.send(f"DDLHub：{_KIND_LABEL.get(row.kind, row.kind)}", row.summary)
+            url = None
+            if row.assignment_id:
+                a = s.get(Assignment, row.assignment_id)
+                url = a.source_url if a else None  # R-P3：重发不再丢链接
+            result = notifier.send(
+                f"DDLHub：{_KIND_LABEL.get(row.kind, row.kind)}", row.summary, url
+            )
             row.attempts += 1
             row.status = "sent" if result.ok else "failed"
             row.error = result.error
@@ -175,12 +219,12 @@ def requeue_stale(container: "Container", older_than_minutes: int = 5, max_attem
 
 
 def _mark_skipped(container: "Container", a: Assignment, nodes: list[tuple[int, object]]) -> None:
-    """补发护栏：错过的较早节点静默标记 skipped（UNIQUE 冲突=已处理过，跳过）。"""
+    """补发护栏：错过的较早节点静默标记 skipped（已存在则跳过，R-P2-6）。"""
     channels = container.active_channels()
     now = now_utc()
     with container.db.session() as s:
         for mb, _fire in nodes:
-            dedupe_key = f"a{a.id}:reminder:b{mb}"
+            dedupe_key = f"a{a.id}:reminder:b{mb}:{a.due_at.date().isoformat()}"
             for name in channels:
                 dup = s.exec(
                     select(NotificationLog).where(
@@ -189,13 +233,18 @@ def _mark_skipped(container: "Container", a: Assignment, nodes: list[tuple[int, 
                     )
                 ).first()
                 if dup:
-                    continue  # 已 claim 过（部分渠道先前已开启等），避免整批回滚
-                s.add(NotificationLog(
-                    assignment_id=a.id, channel=name, kind="reminder",
-                    minutes_before=mb, dedupe_key=dedupe_key,
-                    status="skipped", summary=f"错过未补发（仅补最近节点）：{a.title}",
-                    created_at=now,
-                ))
+                    continue
+                try:
+                    with s.begin_nested():
+                        s.add(NotificationLog(
+                            assignment_id=a.id, channel=name, kind="reminder",
+                            minutes_before=mb, dedupe_key=dedupe_key,
+                            status="skipped",
+                            summary=f"错过未补发（仅补最近节点）：{a.title}",
+                            created_at=now,
+                        ))
+                except Exception:
+                    continue
         s.commit()
 
 
@@ -205,7 +254,7 @@ def run_reminder_tick(container: "Container") -> int:
     - 补发护栏（P0-4）：同作业多个到期节点只发最近一个，更早的置 skipped
     - overdue 双护栏：first_seen_at < due_at 且逾期 <=7 天，只发一次
     - 完成即停：in_scope() 已排除 local_done / submitted / ignored / 无截止
-    - 状态机：UNIQUE(dedupe_key, channel) claim → 重启后计划自然恢复（验收项）
+    - R-P1-3：去重键含 due 日期——老师改期后，新一轮节点不会再被旧键吞掉
     """
     now = now_utc()
     defaults = container.settings.reminder_offsets
@@ -223,13 +272,14 @@ def run_reminder_tick(container: "Container") -> int:
         ).all()
     sent = 0
     for a in candidates:
+        due_day = a.due_at.date().isoformat()
         # 已逾期：只走 overdue（双护栏），不再补发任何 T-x 节点
         if a.due_at <= now:
             if overdue_node(a, now) is not None:
                 summary = (f"「{a.title}」已逾期（截止 {format_local(a.due_at, container.settings.timezone)}），"
                            f"如已完成请到时间线标记")
                 sent += dispatch_notification(
-                    container, kind="overdue", dedupe_key=f"a{a.id}:overdue",
+                    container, kind="overdue", dedupe_key=f"a{a.id}:overdue:{due_day}",
                     assignment_id=a.id, summary=summary, url=a.source_url,
                 )
             continue
@@ -239,12 +289,12 @@ def run_reminder_tick(container: "Container") -> int:
             continue
         latest_mb = nodes[0][0]  # minutes_before 最小 = 离截止最近
         _mark_skipped(container, a, nodes[1:])
-        remaining = a.due_at - now
         summary = (f"「{a.title}」"
                    f"{remaining_text(a.due_at, now)}，"
                    f"截止 {format_local(a.due_at, container.settings.timezone)}")
         sent += dispatch_notification(
-            container, kind="reminder", dedupe_key=f"a{a.id}:reminder:b{latest_mb}",
+            container, kind="reminder",
+            dedupe_key=f"a{a.id}:reminder:b{latest_mb}:{due_day}",
             assignment_id=a.id, minutes_before=latest_mb,
             summary=summary, url=a.source_url,
         )

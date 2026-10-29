@@ -12,11 +12,20 @@ SECRET_RE = re.compile(
     r"(\s*[=:]\s*)([^\s&;'\"]+)",
     re.IGNORECASE,
 )
+# S-P2-1：JSON 形态（"password": "x"）与单字母短键（u=/p=）
+JSON_SECRET_RE = re.compile(
+    r'("(?i:password|passwd|pwd|token|secret|cookie|authorization|smtp_pass|sendkey|api_?key)"'
+    r'\s*:\s*)("[^"]*"|\{[^}]*\}|[^,}\s]+)'
+)
+SHORT_KEY_RE = re.compile(r'(\?|^|&|\s)([up])=([^\s&]+)', re.IGNORECASE)
 MASK = "******"
 
 
 def redact(text: str) -> str:
-    return SECRET_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{MASK}", text)
+    out = SECRET_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{MASK}", text)
+    out = JSON_SECRET_RE.sub(lambda m: f'{m.group(1)}"{MASK}"', out)
+    out = SHORT_KEY_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}={MASK}", out)
+    return out
 
 
 class RedactingFormatter(logging.Formatter):

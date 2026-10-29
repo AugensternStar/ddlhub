@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import secrets
 import socket
 from urllib.parse import urlparse
 
@@ -47,7 +48,8 @@ class HardenMiddleware(BaseHTTPMiddleware):
         return hosts
 
     def _authed(self, request: Request) -> bool:
-        return request.cookies.get(COOKIE_NAME) == self.container.session_secret
+        raw = request.cookies.get(COOKIE_NAME) or ""
+        return secrets.compare_digest(raw, self.container.session_secret)  # S-P3-1
 
     async def dispatch(self, request: Request, call_next):
         host = request.headers.get("host", "")
@@ -70,19 +72,24 @@ class HardenMiddleware(BaseHTTPMiddleware):
             if not authed:
                 return PlainTextResponse("unauthorized: no session", status_code=401)
 
-        if self.container.settings.lan and not authed and not path.startswith("/static") and path != "/login":
+        # SEC-02：local_token 开启时，本地模式也强制令牌交换（共享主机防护）
+        gated = self.container.settings.lan or self.container.settings.local_token
+        if gated and not authed and not path.startswith("/static") and path != "/login":
             if safe:
                 return RedirectResponse("/login", status_code=302)
             return PlainTextResponse("unauthorized", status_code=401)
 
         response = await call_next(request)
         # 会话 cookie 的下发规则：
-        # - 本地模式：首次安全 GET 自动下发（仅 127.0.0.1 可达，等价于本机身份）
-        # - LAN 模式：绝不自动下发——只能通过 /login 的令牌交换获得，
+        # - 本地模式（且未开 local_token）：首次安全 GET 自动下发
+        # - LAN / local_token 模式：只能通过 /login 的令牌交换获得，
         #   否则任何访客访问一次页面就能拿到合法会话，令牌门被绕过
-        if safe and not authed and not path.startswith("/static")                 and not self.container.settings.lan:
+        if safe and not authed and not path.startswith("/static") and not gated:
+            # 注：两种模式均为明文 HTTP，Secure 标志会被浏览器/httpx 拒收；
+            # 未来经 HTTPS 反代访问时应加 secure=True（S-P1-3 残留项，README 已注明）
             response.set_cookie(
                 COOKIE_NAME, self.container.session_secret,
                 httponly=True, samesite="strict", path="/",
+                max_age=30 * 86400,                             # S-P1-3：限期
             )
         return response

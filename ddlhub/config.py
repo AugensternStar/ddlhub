@@ -23,6 +23,7 @@ class Settings:
     min_interval_min: int = 10
     reminder_offsets: tuple[int, ...] = DEFAULT_OFFSETS
     vault_mode: bool = False
+    local_token: bool = False  # SEC-02：本机也强制令牌交换（共享主机场景）
     token: str = ""
     smtp_host: str = ""
     smtp_port: int = 465
@@ -72,8 +73,9 @@ class Settings:
         if not data_dir.is_absolute():
             data_dir = (base_dir / data_dir).resolve()
 
+        local_token = os.getenv("DDLHUB_LOCAL_TOKEN", "0") == "1"
         token = os.getenv("DDLHUB_TOKEN", "")
-        if listen == "lan" and not token:
+        if (listen == "lan" or local_token) and not token:
             token = secrets.token_urlsafe(24)
             _append_env(env_path, f"DDLHUB_TOKEN={token}")
 
@@ -86,6 +88,7 @@ class Settings:
             min_interval_min=min_interval,
             reminder_offsets=offsets,
             vault_mode=os.getenv("DDLHUB_VAULT_MODE", "0") == "1",
+            local_token=local_token,
             token=token,
             smtp_host=os.getenv("DDLHUB_SMTP_HOST", ""),
             smtp_port=_int_env("DDLHUB_SMTP_PORT", 465),

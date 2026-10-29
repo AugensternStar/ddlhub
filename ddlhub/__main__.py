@@ -61,6 +61,21 @@ def _credential_store(settings: Settings, db: Database):
     return KeyringStore()
 
 
+def _acquire_instance_lock(data_dir: Path):
+    """R-P2-8：单实例锁——双开进程时第二实例退出（避免迁移/端口/WAL 竞争）。"""
+    import msvcrt
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = data_dir / "ddlhub.lock"
+    fh = open(lock_path, "a+b")
+    try:
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        fh.close()
+        raise SystemExit("[DDLHub] 检测到另一个实例正在运行（锁被占用），本次启动退出。")
+    return fh  # 进程生命周期持有，退出自动释放
+
+
 def main() -> None:
     base_dir = Path(__file__).resolve().parents[1]
     os.chdir(base_dir)
@@ -70,6 +85,7 @@ def main() -> None:
     warn_unsafe_data_dir(settings.data_dir, log=logger.warning)
     logger.info("DDLHub v%s 启动：数据目录 %s，日志 %s", __version__, settings.data_dir, log_file)
 
+    _lock_fh = _acquire_instance_lock(settings.data_dir)  # 进程退出自动释放
     db = Database(settings.data_dir)
     discover()
 
@@ -88,8 +104,9 @@ def main() -> None:
     shown_host = "本机局域网IP" if settings.lan else "127.0.0.1"
     url = f"http://{shown_host}:{settings.port}/"
     if settings.lan:
-        logger.info("LAN 模式：手机请访问 http://<本机IP>:%s/?token=%s（打开后自动换成 Cookie）",
-                    settings.port, settings.token)
+        # 审计附带发现：token 经 logger 会被自家 redact 抹成 ******——横幅必须走 print
+        print(f"[DDLHub] LAN 模式：手机请访问 http://<本机IP>:{settings.port}/?token={settings.token}"
+              "（打开后自动换成 Cookie）")
     logger.info("Web UI：%s （Ctrl+C 退出）", url)
 
     if not settings.lan:

@@ -15,10 +15,10 @@ from tenacity import Retrying, stop_after_attempt, wait_exponential
 
 from ..adapters.registry import REGISTRY
 from .db import Database
-from .models import Account, SyncRun
+from .models import Account, Assignment, SyncRun
 from .normalize import now_utc
 from .redact import redact
-from .reminders import dispatch_notification
+from .reminders import send_pending
 from .upsert import upsert_assignments, upsert_courses
 
 _LOCKS: dict[int, threading.Lock] = {}
@@ -102,7 +102,11 @@ def _finish_run(
             elif status in ("success", "partial"):
                 account.status = "ok"
                 account.last_ok_at = now_utc()
-                account.last_error = ""
+                # R-P2-9：全部课程抓取失败（partial 且 0 成功）→ 界面可见，不再一路绿灯
+                if status == "partial" and fail_count > 0 and ok_count == 0:
+                    account.last_error = f"全部课程抓取失败：{error[:200]}"
+                else:
+                    account.last_error = ""
             elif status == "failed":
                 account.last_error = error[:2000]
         s.commit()
@@ -120,11 +124,13 @@ def _sync_locked(container, account_id: int, trigger: str) -> SyncOutcome:
         adapter_key = account.adapter_key
         label = account.label
 
-        # 自动触发限频：距上次同步不足下限则跳过（红线；手动同步豁免）
+        # 自动触发限频：距上次【实际】同步不足下限则跳过（红线；手动同步豁免）。
+        # R-P2-2：基准排除 skipped 行——被跳过的班次不推长限频窗口
         if trigger in ("cron", "startup"):
             last = s.exec(
                 select(SyncRun)
-                .where(SyncRun.account_id == account_id)
+                .where(SyncRun.account_id == account_id,
+                       SyncRun.status != "skipped")
                 .order_by(SyncRun.started_at.desc())
             ).first()
             if (
@@ -142,7 +148,8 @@ def _sync_locked(container, account_id: int, trigger: str) -> SyncOutcome:
                 s.commit()
                 return SyncOutcome(True, "距上次同步不足下限，已跳过", run.id)
 
-        run = SyncRun(account_id=account_id, trigger=trigger, status="success", started_at=now)
+        # R-P2-1：先落 running——进程中断时不会留下"假 success"
+        run = SyncRun(account_id=account_id, trigger=trigger, status="running", started_at=now)
         s.add(run)
         s.commit()
         run_id = run.id
@@ -171,7 +178,6 @@ def _sync_locked(container, account_id: int, trigger: str) -> SyncOutcome:
     failed = 0
     run_status = "success"
     error_summary = ""
-    all_notifications: list[tuple[str, int, str]] = []
     try:
         health = _retry_call(adapter.health_check)
         if health.need_relogin:
@@ -193,14 +199,27 @@ def _sync_locked(container, account_id: int, trigger: str) -> SyncOutcome:
             if course_draft is None:
                 continue
             try:
+                # R-P1-4：解析到 0 条而库里此前有数据 → 疑似页面改版，显式告警而非静默成功
+                with db.session() as s:
+                    from sqlalchemy import func
+
+                    existing = s.exec(
+                        select(func.count()).select_from(Assignment).where(
+                            Assignment.course_id == ref.id)
+                    ).one()
                 drafts = _retry_call(adapter.fetch_assignments, course_draft)
                 stats = upsert_assignments(
                     db, account_id, ref.id, csrc, drafts,
                     container.settings.timezone,
                     notify_new=prior_success,
+                    channel_names=list(container.active_channels().keys()),
                 )
                 ok += stats.total
-                all_notifications.extend(stats.notifications)
+                if stats.total == 0 and existing > 0:
+                    failed += 1
+                    msg = f"{csrc}: 解析到 0 条（此前 {existing} 条），疑似页面改版或会话异常"
+                    errors.append(msg)
+                    container.logger.warning(msg)
             except Exception as exc:
                 failed += 1
                 errors.append(f"{csrc}: {type(exc).__name__}")
@@ -217,12 +236,8 @@ def _sync_locked(container, account_id: int, trigger: str) -> SyncOutcome:
     finally:
         adapter.close()
 
-    # ---- 变更通知：upsert 已提交，独立事务逐条 claim（UNIQUE 挡并发双发）----
-    for summary, aid, dedupe_key in all_notifications:
-        dispatch_notification(
-            container, kind="change", dedupe_key=dedupe_key,
-            assignment_id=aid, summary=summary,
-        )
+    # ---- 变更通知：outbox 已随 upsert 事务落 pending，这里统一发送 ----
+    send_pending(container)
 
     # ---- 阶段3：落 run 结果与账号状态 ----
     _finish_run(

@@ -83,23 +83,31 @@ def test_local_fields_never_overwritten(db):
 
 def test_due_change_tolerance_for_relative_countdown(db):
     """学习通给出的是相对倒计时还原的绝对时间，分钟级误差不应算 DDL 变更。"""
+    from sqlmodel import select
+
+    from ddlhub.core.models import NotificationLog
+
     acc = _account(db)
     cid = _course(db, acc)
     due = datetime(2026, 4, 1, 8, 0, tzinfo=SH)
     upsert_assignments(db, acc.id, cid, "C1", [_draft(due=due)], "Asia/Shanghai",
-                       notify_new=False)
+                       notify_new=False, channel_names=[])
 
     # ±10 分钟：同一截止，不产生变更
     s1 = upsert_assignments(db, acc.id, cid, "C1",
                             [_draft(due=due + timedelta(minutes=10))], "Asia/Shanghai",
-                            notify_new=False)
-    assert s1.unchanged == 1 and s1.notifications == []
+                            notify_new=False, channel_names=[])
+    assert s1.unchanged == 1
 
-    # ±2 小时：真变更 → updated + 1 条 change 通知
+    # ±2 小时：真变更 → updated + outbox 落 1 条 pending claim
     s2 = upsert_assignments(db, acc.id, cid, "C1",
                             [_draft(due=due + timedelta(hours=2))], "Asia/Shanghai",
-                            notify_new=False)
-    assert s2.updated == 1 and len(s2.notifications) == 1
+                            notify_new=False, channel_names=["desktop"])
+    assert s2.updated == 1
+    claims = db.session().exec(
+        select(NotificationLog).where(NotificationLog.status == "pending")
+    ).all()
+    assert len(claims) == 1 and claims[0].kind == "change"
 
 
 def test_status_aligns_with_platform_without_noise(db):

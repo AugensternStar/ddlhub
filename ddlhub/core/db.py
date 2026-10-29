@@ -10,18 +10,33 @@ _MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
 
 
 def _split_sql(script: str) -> list[str]:
-    """把多语句 SQL 脚本按分号切成单语句（引号感知；纯注释块丢弃）。"""
+    """把多语句 SQL 脚本按分号切成单语句（引号感知 + 跳过 -- 注释，R-P2-7）。
+
+    注释里出现撇号（如 don't）不会再让 in_str 常开。
+    """
     parts: list[str] = []
     buf: list[str] = []
     in_str = False
-    for ch in script:
+    i = 0
+    n = len(script)
+    while i < n:
+        ch = script[i]
         if ch == "'":
             in_str = not in_str
+            buf.append(ch)
+            i += 1
+            continue
+        if not in_str and ch == "-" and i + 1 < n and script[i + 1] == "-":
+            while i < n and script[i] != "\n":  # 行注释：跳到行尾
+                i += 1
+            continue
         if ch == ";" and not in_str:
             parts.append("".join(buf))
             buf = []
-        else:
-            buf.append(ch)
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
     parts.append("".join(buf))
 
     stmts: list[str] = []
@@ -51,7 +66,7 @@ class Database:
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA journal_mode=WAL")
         cur.execute("PRAGMA foreign_keys=ON")
-        cur.execute("PRAGMA busy_timeout=5000")
+        cur.execute("PRAGMA busy_timeout=15000")  # 与 connect timeout 对齐（R-P3）
         cur.close()
 
     def migrate(self) -> list[int]:

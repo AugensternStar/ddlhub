@@ -10,14 +10,27 @@
 from __future__ import annotations
 
 import hashlib
+import uuid as uuidlib
 from dataclasses import dataclass, field
 
 from sqlmodel import select
 
 from ..adapters.base import AssignmentDraft, CourseDraft
 from .db import Database
-from .models import Assignment, Course
+from .models import Assignment, Course, NotificationLog
 from .normalize import format_local, now_utc, to_utc
+
+_SAFE_URL_SCHEMES = ("http", "https")
+
+
+def _safe_external_url(u: str | None) -> str | None:
+    """SEC-01：平台数据里的链接只允许 http/https（防 javascript: 同源 XSS）。"""
+    if not u:
+        return None
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(u)
+    return u if parts.scheme in _SAFE_URL_SCHEMES and parts.netloc else None
 
 
 def natural_source_id(draft: AssignmentDraft) -> str:
@@ -41,6 +54,32 @@ class UpsertStats:
 class CourseRef:
     id: int
     enabled: bool = True
+
+
+def _claim_pending(
+    s, channel_names: list[str], *, assignment_id: int | None, kind: str,
+    dedupe_key: str, summary: str, minutes_before: int | None = None, now=None,
+) -> None:
+    """outbox：在业务事务内写 pending 通知（R-P2-3），由 send_pending 统一发送。"""
+    now = now or now_utc()
+    for name in channel_names:
+        dup = s.exec(
+            select(NotificationLog).where(
+                NotificationLog.dedupe_key == dedupe_key,
+                NotificationLog.channel == name,
+            )
+        ).first()
+        if dup:
+            continue  # R-P2-6：存在即跳过；竞态余量由 begin_nested 兜底
+        try:
+            with s.begin_nested():
+                s.add(NotificationLog(
+                    assignment_id=assignment_id, channel=name, kind=kind,
+                    minutes_before=minutes_before, dedupe_key=dedupe_key,
+                    status="pending", summary=summary[:1000], created_at=now,
+                ))
+        except Exception:
+            continue  # 并发撞 UNIQUE：已被他方 claim
 
 
 def upsert_courses(db: Database, account_id: int, drafts: list[CourseDraft]) -> dict[str, CourseRef]:
@@ -79,11 +118,13 @@ def upsert_assignments(
     tz_name: str,
     *,
     notify_new: bool,
+    channel_names: list[str] | None = None,   # outbox：变更/新增通知在同事务写 pending
 ) -> UpsertStats:
     stats = UpsertStats()
     now = now_utc()
     with db.session() as s:
         for d in drafts:
+            d.source_url = _safe_external_url(d.source_url)  # SEC-01
             source_id = natural_source_id(d)
             due = to_utc(d.due_at, tz_name)
             published = to_utc(d.published_at, tz_name)
@@ -115,9 +156,11 @@ def upsert_assignments(
                 s.add(row)
                 s.flush()
                 stats.created += 1
-                if notify_new:
-                    stats.notifications.append(
-                        (f"新增作业：{d.title}", row.id, f"a{row.id}:change:new:{now.timestamp():.0f}")
+                if notify_new and channel_names:
+                    key = f"a{row.id}:change:new:{uuidlib.uuid4().hex[:8]}"
+                    _claim_pending(
+                        s, channel_names, assignment_id=row.id, kind="change",
+                        dedupe_key=key, summary=f"新增作业：{d.title}", now=now,
                     )
                 continue
 
@@ -129,6 +172,11 @@ def upsert_assignments(
                 and row.due_at is not None
                 and abs((due - row.due_at).total_seconds()) > 1800
             ) or (due is None) != (row.due_at is None)
+            # R-P1-2：平台对已截止作业只给"已截止"不给绝对时间——保留既有 due_at，
+            # 绝不写成 NULL（否则逾期提醒永久失效）
+            keep_due = due is None and row.due_at is not None
+            if keep_due:
+                due_changed = False
             if due_changed:
                 old = format_local(row.due_at, tz_name) if row.due_at else "（无）"
                 new = format_local(due, tz_name) if due else "（无）"
@@ -164,7 +212,13 @@ def upsert_assignments(
                 summary = f"「{d.title}」" + "；".join(
                     f"{k}从 {o} 改为 {n}" for k, o, n in changes
                 )
-                stats.notifications.append((summary, row.id, f"a{row.id}:change:{digest}"))
+                if channel_names:
+                    # R-P2-4：键含时间戳——同一变更再次发生（A→B→A→B）每次都应通知
+                    _claim_pending(
+                        s, channel_names, assignment_id=row.id, kind="change",
+                        dedupe_key=f"a{row.id}:change:{digest}:{uuidlib.uuid4().hex[:8]}",
+                        summary=summary, now=now,
+                    )
 
             if due_changed or title_changed or status_changed:
                 stats.updated += 1
