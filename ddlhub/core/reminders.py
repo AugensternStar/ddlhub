@@ -138,14 +138,17 @@ def send_pending(container: "Container", ids: list[int] | None = None) -> int:
         if ids is not None:
             stmt = stmt.where(NotificationLog.id.in_(ids))
         rows = s.exec(stmt).all()
+        # CR-07：批量预取链接，避免逐行 N+1
+        url_map: dict[int, str | None] = {}
+        aids = {r.assignment_id for r in rows if r.assignment_id}
+        if aids:
+            for a in s.exec(select(Assignment).where(Assignment.id.in_(aids))).all():
+                url_map[a.id] = a.source_url
         for row in rows:
             notifier = channels.get(row.channel)
             if notifier is None:
                 continue  # 渠道未启用/不可用：留在 pending，启用后续发
-            url = None
-            if row.assignment_id:
-                a = s.get(Assignment, row.assignment_id)
-                url = a.source_url if a else None
+            url = url_map.get(row.assignment_id)
             result = notifier.send(
                 f"DDLHub：{_KIND_LABEL.get(row.kind, row.kind)}", row.summary, url
             )
@@ -197,14 +200,18 @@ def requeue_stale(container: "Container", older_than_minutes: int = 5, max_attem
                 NotificationLog.attempts < max_attempts,
             )
         ).all()
-        for row in pending_rows + failed_rows:
+        rows = pending_rows + failed_rows
+        # CR-07：批量预取链接，避免逐行 N+1
+        url_map: dict[int, str | None] = {}
+        aids = {r.assignment_id for r in rows if r.assignment_id}
+        if aids:
+            for a in s.exec(select(Assignment).where(Assignment.id.in_(aids))).all():
+                url_map[a.id] = a.source_url
+        for row in rows:
             notifier = channels.get(row.channel)
             if notifier is None:
                 continue  # 渠道当前不可用，留给下轮
-            url = None
-            if row.assignment_id:
-                a = s.get(Assignment, row.assignment_id)
-                url = a.source_url if a else None  # R-P3：重发不再丢链接
+            url = url_map.get(row.assignment_id)  # R-P3：重发不再丢链接
             result = notifier.send(
                 f"DDLHub：{_KIND_LABEL.get(row.kind, row.kind)}", row.summary, url
             )
@@ -219,32 +226,17 @@ def requeue_stale(container: "Container", older_than_minutes: int = 5, max_attem
 
 
 def _mark_skipped(container: "Container", a: Assignment, nodes: list[tuple[int, object]]) -> None:
-    """补发护栏：错过的较早节点静默标记 skipped（已存在则跳过，R-P2-6）。"""
+    """补发护栏：错过的较早节点静默标记 skipped（CR-12：复用 _claim_pending 单一实现）。"""
     channels = container.active_channels()
     now = now_utc()
     with container.db.session() as s:
         for mb, _fire in nodes:
-            dedupe_key = f"a{a.id}:reminder:b{mb}:{a.due_at.date().isoformat()}"
-            for name in channels:
-                dup = s.exec(
-                    select(NotificationLog).where(
-                        NotificationLog.dedupe_key == dedupe_key,
-                        NotificationLog.channel == name,
-                    )
-                ).first()
-                if dup:
-                    continue
-                try:
-                    with s.begin_nested():
-                        s.add(NotificationLog(
-                            assignment_id=a.id, channel=name, kind="reminder",
-                            minutes_before=mb, dedupe_key=dedupe_key,
-                            status="skipped",
-                            summary=f"错过未补发（仅补最近节点）：{a.title}",
-                            created_at=now,
-                        ))
-                except Exception:
-                    continue
+            _claim_pending(
+                s, list(channels), assignment_id=a.id, kind="reminder",
+                dedupe_key=f"a{a.id}:reminder:b{mb}:{a.due_at.date().isoformat()}",
+                summary=f"错过未补发（仅补最近节点）：{a.title}",
+                minutes_before=mb, now=now, status="skipped",
+            )
         s.commit()
 
 

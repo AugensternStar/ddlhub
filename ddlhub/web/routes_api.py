@@ -17,7 +17,6 @@ from ..adapters.registry import REGISTRY
 from ..core.models import Account, Assignment, Course, NotificationLog
 from ..core.normalize import now_utc
 from ..core.redact import redact
-from ..core.reminders import dispatch_notification
 from ..core.security import mask_username
 from ..core.sync import sync_account, sync_all
 from ..core.interactive import LoginState
@@ -97,7 +96,13 @@ def create_account(
         entry_url = entry_url.strip()
         if not entry_url.startswith(("http://", "https://")):
             return RedirectResponse("/?msg=" + quote("自定义平台需要填写正确的登录页 URL（http/https）"), status_code=303)
-        host = urlsplit(entry_url).netloc.split(":")[0]
+        try:
+            _host = urlsplit(entry_url).hostname  # CR-08：畸形 URL（如未闭合 IPv6）在创建时即拒绝
+        except ValueError:
+            return RedirectResponse("/?msg=" + quote("登录页 URL 无法解析，请检查格式"), status_code=303)
+        if not _host:
+            return RedirectResponse("/?msg=" + quote("登录页 URL 缺少主机名"), status_code=303)
+        host = _host
         parts = host.split(".")
         second_level = {"edu.cn", "com.cn", "org.cn", "net.cn", "gov.cn", "ac.cn"}
         if cookie_domain.strip():

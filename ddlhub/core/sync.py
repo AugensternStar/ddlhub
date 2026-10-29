@@ -11,6 +11,7 @@ import threading
 from dataclasses import dataclass
 
 from sqlmodel import select
+from sqlalchemy import func
 from tenacity import Retrying, stop_after_attempt, wait_exponential
 
 from ..adapters.registry import REGISTRY
@@ -201,8 +202,6 @@ def _sync_locked(container, account_id: int, trigger: str) -> SyncOutcome:
             try:
                 # R-P1-4：解析到 0 条而库里此前有数据 → 疑似页面改版，显式告警而非静默成功
                 with db.session() as s:
-                    from sqlalchemy import func
-
                     existing = s.exec(
                         select(func.count()).select_from(Assignment).where(
                             Assignment.course_id == ref.id)

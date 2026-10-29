@@ -75,6 +75,12 @@ class InteractiveLoginManager:
                 probe.close()
                 self._set(account_id, "failed", "该平台未配置登录入口（自定义平台需填登录页 URL）")
                 return
+            try:
+                probe.validate_login_entry()  # SEC-03：导航前强制校验（私网/可解析性）
+            except RuntimeError as exc:
+                probe.close()
+                self._set(account_id, "failed", str(exc))
+                return
             probe.close()
             label = account.label
         except Exception as exc:

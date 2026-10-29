@@ -33,7 +33,12 @@ class CustomAdapter(BaseAdapter):
 
     @property
     def login_entry_url(self) -> str:
-        return (self.ctx.config or {}).get("entry_url", "")
+        url = (self.ctx.config or {}).get("entry_url", "")
+        try:
+            urlsplit(url)  # CR-08：畸形 URL（如未闭合 IPv6）→ 视为未配置，交由上层给出明确错误
+        except ValueError:
+            return ""
+        return url
 
     @property
     def cookie_domain(self) -> str:  # type: ignore[override]
@@ -77,6 +82,10 @@ class CustomAdapter(BaseAdapter):
         if (ip.is_private or ip.is_loopback or ip.is_link_local
                 or ip.is_reserved or ip.is_multicast):
             raise RuntimeError(f"自定义平台地址被拒绝：{ip} 为内网/保留地址（安全策略）")
+
+    def validate_login_entry(self) -> None:
+        """SEC-03：有头登录导航前强制执行私网/可解析性校验。"""
+        self._assert_public_url(self.login_entry_url)
 
     def login(self, cred: Credentials) -> LoginResult:
         self._assert_public_url(self.login_entry_url)  # SEC-03：登录前校验

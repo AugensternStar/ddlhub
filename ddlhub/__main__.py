@@ -62,14 +62,22 @@ def _credential_store(settings: Settings, db: Database):
 
 
 def _acquire_instance_lock(data_dir: Path):
-    """R-P2-8：单实例锁——双开进程时第二实例退出（避免迁移/端口/WAL 竞争）。"""
-    import msvcrt
+    """R-P2-8：单实例锁——双开进程时第二实例退出（避免迁移/端口/WAL 竞争）。
 
+    CR-01：Windows 用 msvcrt，POSIX 用 fcntl（start.sh 是受支持的交付路径）。
+    """
     data_dir.mkdir(parents=True, exist_ok=True)
     lock_path = data_dir / "ddlhub.lock"
     fh = open(lock_path, "a+b")
     try:
-        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        try:
+            import msvcrt
+
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        except ImportError:
+            import fcntl
+
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         fh.close()
         raise SystemExit("[DDLHub] 检测到另一个实例正在运行（锁被占用），本次启动退出。")

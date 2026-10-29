@@ -52,8 +52,9 @@ def create_app(container: Container) -> FastAPI:
     container.templates = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
     app.state.container = container
 
-    app.add_middleware(SecurityHeadersMiddleware)
+    # CR-04：SecurityHeaders 必须在最外层——否则 Harden 的 403/302 短路响应不带安全头
     app.add_middleware(HardenMiddleware, container=container)
+    app.add_middleware(SecurityHeadersMiddleware)
     app.mount("/static", StaticFiles(directory=str(_WEB_DIR / "static")), name="static")
     app.include_router(ui_router)
     app.include_router(api_router)

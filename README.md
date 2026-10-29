@@ -90,7 +90,7 @@ flowchart LR
 python -m venv .venv
 .venv\Scripts\pip install -e ".[dev,real-adapters]"
 .venv\Scripts\playwright install chromium   # 真实平台适配器需要
-.venv\Scripts\pytest                        # 65 个用例
+.venv\Scripts\pytest                        # 113 个用例
 .venv\Scripts\python -m ddlhub
 ```
 

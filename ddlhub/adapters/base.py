@@ -165,6 +165,11 @@ class BaseAdapter(ABC):
         默认用通用判定（快照 diff + 特征 cookie + 离开登录页）；平台可覆盖。"""
         return self.generic_login_success(context, page, snapshot)
 
+    def validate_login_entry(self) -> None:
+        """有头登录导航前校验登录入口（默认无操作；自定义平台做私网/可解析性校验，
+        抛 RuntimeError 表示拒绝导航）。"""
+        return None
+
     def _httpx_with_session(self, cookie_domain_filter: str | None = None):
         """用已存（加密）会话构造带 cookie 的 httpx 客户端。"""
         import httpx

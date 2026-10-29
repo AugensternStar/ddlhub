@@ -59,8 +59,14 @@ class CourseRef:
 def _claim_pending(
     s, channel_names: list[str], *, assignment_id: int | None, kind: str,
     dedupe_key: str, summary: str, minutes_before: int | None = None, now=None,
+    status: str = "pending",
 ) -> None:
-    """outbox：在业务事务内写 pending 通知（R-P2-3），由 send_pending 统一发送。"""
+    """outbox：在业务事务内写通知声明（R-P2-3），由 send_pending 统一发送。
+
+    status 默认 pending；"skipped" 用于补发护栏的静默标记（CR-12：单一实现防漂移）。
+    渠道全关期间（channel_names 为空）发生的变更不产生 claim——重开渠道后无 diff
+    不会补通知（CR-09 已知取舍，文档化）。
+    """
     now = now or now_utc()
     for name in channel_names:
         dup = s.exec(
@@ -76,7 +82,7 @@ def _claim_pending(
                 s.add(NotificationLog(
                     assignment_id=assignment_id, channel=name, kind=kind,
                     minutes_before=minutes_before, dedupe_key=dedupe_key,
-                    status="pending", summary=summary[:1000], created_at=now,
+                    status=status, summary=summary[:1000], created_at=now,
                 ))
         except Exception:
             continue  # 并发撞 UNIQUE：已被他方 claim

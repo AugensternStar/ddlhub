@@ -234,48 +234,56 @@ class XuexitongAdapter(BaseAdapter):
                 owns_page = False  # 共享空间页，绝不 close
             else:
                 raise RuntimeError(f"课程「{name}」点击后未跳转（页面可能改版）")
+
         try:
-            cp.wait_for_load_state("load", timeout=20000)
-        except Exception:
-            pass
-        cp.wait_for_timeout(2000)
-
-        clicked = False
-        for f in [cp.main_frame] + cp.frames:
             try:
-                f.get_by_text("作业", exact=True).first.click(timeout=2500)
-                clicked = True
-                break
+                cp.wait_for_load_state("load", timeout=20000)
             except Exception:
-                continue
-        if not clicked:
+                pass
+            cp.wait_for_timeout(2000)
+
+            clicked = False
+            for f in [cp.main_frame] + cp.frames:
+                try:
+                    f.get_by_text("作业", exact=True).first.click(timeout=2500)
+                    clicked = True
+                    break
+                except Exception:
+                    continue
+            if not clicked:
+                raise RuntimeError(f"课程「{name}」页面未找到作业入口（页面可能改版）")
+            cp.wait_for_timeout(3000)
+
+            html = None
+            for f in cp.frames:
+                try:
+                    c = f.content()
+                except Exception:
+                    continue
+                if "作业列表" in c or "暂无作业" in c:
+                    html = c
+                    break
+            if html is None:
+                raise RuntimeError(f"课程「{name}」作业列表未渲染（页面可能改版）")
+
+            drafts = parse_work_list_html(
+                html, course.source_id, course.url,
+                now=datetime.now(ZoneInfo(self._TZ)),
+            )
+            self.ctx.log.info("xuexitong: course %s -> %d assignments", name, len(drafts))
+            return drafts
+        finally:
+            # R-P1-1：只关自己打开的页；CR-02：同页回退后必须导航回空间页，
+            # 否则本轮剩余课程全部找不到课程卡
             if owns_page:
                 cp.close()
-            raise RuntimeError(f"课程「{name}」页面未找到作业入口（页面可能改版）")
-        cp.wait_for_timeout(3000)
-
-        html = None
-        for f in cp.frames:
-            try:
-                c = f.content()
-            except Exception:
-                continue
-            if "作业列表" in c or "暂无作业" in c:
-                html = c
-                break
-        if html is None:
-            if owns_page:
-                cp.close()
-            raise RuntimeError(f"课程「{name}」作业列表未渲染（页面可能改版）")
-        if owns_page:
-            cp.close()
-
-        drafts = parse_work_list_html(
-            html, course.source_id, course.url,
-            now=datetime.now(ZoneInfo(self._TZ)),
-        )
-        self.ctx.log.info("xuexitong: course %s -> %d assignments", name, len(drafts))
-        return drafts
+            else:
+                try:
+                    self._home.goto("https://i.chaoxing.com/base", timeout=30000)
+                    self._home.wait_for_load_state("load")
+                    self._home.wait_for_timeout(3500)
+                except Exception:
+                    self.ctx.log.warning("xuexitong: failed to restore space page after fallback")
 
     # ---- 浏览器会话（每账号一次启动，close() 释放）----
 

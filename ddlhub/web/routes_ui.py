@@ -167,8 +167,10 @@ def login_page(request: Request, token: str = Query("")):
     c = container_of(request)
     if token and _secrets.compare_digest(token, c.settings.token):
         resp = RedirectResponse("/", status_code=302)
+        # CR-11：与主会话一致的 30 天有效期——服务重启后手机不必重输令牌
         resp.set_cookie(COOKIE_NAME, c.session_secret,
-                        httponly=True, samesite="strict", path="/")
+                        httponly=True, samesite="strict", path="/",
+                        max_age=30 * 86400)
         return resp
     return c.templates.TemplateResponse(
         request, "login.html", {"port": c.settings.port}
