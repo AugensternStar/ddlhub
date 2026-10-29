@@ -13,7 +13,6 @@ from sqlmodel import select
 
 from .models import Assignment, NotificationLog
 from .normalize import format_local, now_utc, remaining_text
-from .redact import redact
 
 if TYPE_CHECKING:
     from .runtime import Container
@@ -181,19 +180,23 @@ def _mark_skipped(container: "Container", a: Assignment, nodes: list[tuple[int, 
     now = now_utc()
     with container.db.session() as s:
         for mb, _fire in nodes:
+            dedupe_key = f"a{a.id}:reminder:b{mb}"
             for name in channels:
-                row = NotificationLog(
+                dup = s.exec(
+                    select(NotificationLog).where(
+                        NotificationLog.dedupe_key == dedupe_key,
+                        NotificationLog.channel == name,
+                    )
+                ).first()
+                if dup:
+                    continue  # 已 claim 过（部分渠道先前已开启等），避免整批回滚
+                s.add(NotificationLog(
                     assignment_id=a.id, channel=name, kind="reminder",
-                    minutes_before=mb,
-                    dedupe_key=f"a{a.id}:reminder:b{mb}",
+                    minutes_before=mb, dedupe_key=dedupe_key,
                     status="skipped", summary=f"错过未补发（仅补最近节点）：{a.title}",
                     created_at=now,
-                )
-                s.add(row)
-        try:
-            s.commit()
-        except Exception:
-            s.rollback()
+                ))
+        s.commit()
 
 
 def run_reminder_tick(container: "Container") -> int:

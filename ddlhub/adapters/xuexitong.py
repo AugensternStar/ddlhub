@@ -189,7 +189,7 @@ class XuexitongAdapter(BaseAdapter):
         except Exception as exc:
             return Health(ok=False, need_relogin=False, detail=f"网络异常：{exc}")
         finally:
-            self.close()
+            self._close_http()  # 只关 http 客户端，不动浏览器（fetch_assignments 还要用）
 
     # ---- 抓取 ----
 
@@ -219,9 +219,18 @@ class XuexitongAdapter(BaseAdapter):
         if card is None:
             raise RuntimeError(f"课程「{name}」未出现在空间页（可能已结束或被隐藏）")
 
-        with self._pw_ctx.expect_page(timeout=15000) as pop:
-            card.click()
-        cp = pop.value
+        home_url_before = self._home.url
+        try:
+            with self._pw_ctx.expect_page(timeout=15000) as pop:
+                card.click()
+            cp = pop.value
+        except Exception:
+            # 某些课程在当前标签打开而非新标签 → 回退用空间页本身
+            self._home.wait_for_timeout(1500)
+            if self._home.url != home_url_before:
+                cp = self._home
+            else:
+                raise RuntimeError(f"课程「{name}」点击后未跳转（页面可能改版）")
         try:
             cp.wait_for_load_state("load", timeout=20000)
         except Exception:
@@ -320,10 +329,13 @@ class XuexitongAdapter(BaseAdapter):
         )
         return self._client
 
-    def close(self) -> None:
+    def _close_http(self) -> None:
         if self._client is not None:
             self._client.close()
             self._client = None
+
+    def close(self) -> None:
+        self._close_http()
         # 浏览器资源：内存态 context 随之消亡，磁盘无任何明文
         try:
             if self._pw_ctx is not None:

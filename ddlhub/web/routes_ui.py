@@ -135,7 +135,6 @@ def _statusbar_ctx(container, msg: str = "") -> dict:
         last = s.exec(select(SyncRun).order_by(SyncRun.started_at.desc())).first()
     accounts = []
     for a in accs:
-        cls = REGISTRY.get(a.adapter_key)
         accounts.append({
             "id": a.id,
             "label": a.label,
@@ -154,9 +153,31 @@ def _statusbar_ctx(container, msg: str = "") -> dict:
     }
 
 
+import secrets as _secrets
+
+from fastapi.responses import RedirectResponse
+from starlette.responses import Response as _Response
+
+from .harden import COOKIE_NAME
+
+
+@router.get("/login")
+def login_page(request: Request, token: str = Query("")):
+    """LAN 模式：token 一次性交换 → HttpOnly Cookie → 302 清掉 URL。"""
+    c = container_of(request)
+    if token and _secrets.compare_digest(token, c.settings.token):
+        resp = RedirectResponse("/", status_code=302)
+        resp.set_cookie(COOKIE_NAME, c.session_secret,
+                        httponly=True, samesite="strict", path="/")
+        return resp
+    return c.templates.TemplateResponse(
+        request, "login.html", {"port": c.settings.port}
+    )
+
+
 @router.get("/settings")
 def settings_page(request: Request, msg: str = Query("")):
-    """设置页：平台管理（添加/删除/重新登录/演示场景）+ 按账号的课程选择。"""
+    """设置页：平台管理（添加/删除/重新登录）+ 通知渠道 + 按账号的课程选择。"""
     c = container_of(request)
     ctx = _statusbar_ctx(c, msg)
     ctx["view"] = "settings"

@@ -41,14 +41,34 @@ class Settings:
         if env_path.exists():
             load_dotenv(env_path)
 
-        port = int(os.getenv("DDLHUB_PORT", "8787"))
+        def _int_env(name: str, default: int) -> int:
+            raw = os.getenv(name, "")
+            try:
+                return int(raw) if raw.strip() else default
+            except ValueError:
+                print(f"[警告] {name}={raw!r} 不是整数，使用默认值 {default}")
+                return default
+
+        def _offsets_env() -> tuple[int, ...]:
+            raw = os.getenv("DDLHUB_REMINDER_OFFSETS", "")
+            if not raw.strip():
+                return DEFAULT_OFFSETS
+            try:
+                vals = {int(x) for x in raw.split(",") if x.strip()}
+                if not vals:
+                    raise ValueError("empty")
+                return tuple(sorted(vals, reverse=True))
+            except ValueError:
+                print(f"[警告] DDLHUB_REMINDER_OFFSETS={raw!r} 格式非法，使用默认档位")
+                return DEFAULT_OFFSETS
+
+        port = _int_env("DDLHUB_PORT", 8787)
         listen = os.getenv("DDLHUB_LISTEN", "local").strip().lower()
-        min_interval = max(10, int(os.getenv("DDLHUB_MIN_INTERVAL_MIN", "10")))  # 红线钳制
-        raw_offsets = os.getenv("DDLHUB_REMINDER_OFFSETS", ",".join(map(str, DEFAULT_OFFSETS)))
-        offsets = tuple(sorted({int(x) for x in raw_offsets.split(",") if x.strip()}, reverse=True))
+        min_interval = max(10, _int_env("DDLHUB_MIN_INTERVAL_MIN", 10))  # 红线钳制
+        offsets = _offsets_env()
         sync_times = tuple(
             t.strip() for t in os.getenv("DDLHUB_SYNC_TIMES", "08:00,21:00").split(",") if t.strip()
-        )
+        ) or ("08:00", "21:00")
         data_dir = Path(os.getenv("DDLHUB_DATA_DIR", "data")).expanduser()
         if not data_dir.is_absolute():
             data_dir = (base_dir / data_dir).resolve()
@@ -70,7 +90,7 @@ class Settings:
             master_password=os.getenv("DDLHUB_MASTER_PASSWORD", ""),
             token=token,
             smtp_host=os.getenv("DDLHUB_SMTP_HOST", ""),
-            smtp_port=int(os.getenv("DDLHUB_SMTP_PORT", "465")),
+            smtp_port=_int_env("DDLHUB_SMTP_PORT", 465),
             smtp_user=os.getenv("DDLHUB_SMTP_USER", ""),
             smtp_pass=os.getenv("DDLHUB_SMTP_PASS", ""),
         )

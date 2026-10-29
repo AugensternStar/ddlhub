@@ -76,7 +76,11 @@ class HardenMiddleware(BaseHTTPMiddleware):
             return PlainTextResponse("unauthorized", status_code=401)
 
         response = await call_next(request)
-        if safe and not authed and not path.startswith("/static"):
+        # 会话 cookie 的下发规则：
+        # - 本地模式：首次安全 GET 自动下发（仅 127.0.0.1 可达，等价于本机身份）
+        # - LAN 模式：绝不自动下发——只能通过 /login 的令牌交换获得，
+        #   否则任何访客访问一次页面就能拿到合法会话，令牌门被绕过
+        if safe and not authed and not path.startswith("/static")                 and not self.container.settings.lan:
             response.set_cookie(
                 COOKIE_NAME, self.container.session_secret,
                 httponly=True, samesite="strict", path="/",

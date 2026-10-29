@@ -1,7 +1,12 @@
 """本地 Web 加固：Host 白名单 / Origin / Sec-Fetch-Site / 会话 cookie（P0-5）。"""
+import logging
+from dataclasses import replace
+
 import pytest
 from fastapi.testclient import TestClient
 
+from ddlhub.core.runtime import Container
+from ddlhub.core.security import KeyringStore
 from ddlhub.web.main import create_app
 
 
@@ -59,3 +64,60 @@ def test_non_browser_client_without_origin_allowed(client):
     client.get("/")
     r = client.post("/api/assignments/999999/action", data={"action": "done"})
     assert r.status_code == 404
+
+
+# ---------- LAN 模式：/login 令牌交换（体检发现的路由缺失回归） ----------
+
+@pytest.fixture
+def lan_container(settings, db, fake_notifier):
+    from dataclasses import replace
+
+    from ddlhub.core.runtime import Container
+
+    lan_settings = replace(settings, listen="lan", token="test-token-123")
+    return Container(
+        settings=lan_settings, db=db, logger=logging.getLogger("test"),
+        session_secret="test-secret", credential_store=KeyringStore(),
+        kek=bytes(32), channel_override={"desktop": fake_notifier},
+    )
+
+
+def test_lan_unauthenticated_redirects_to_login(lan_container):
+    app = create_app(lan_container)
+    client = TestClient(app, base_url="http://127.0.0.1:8787")
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "/login"
+
+
+def test_lan_login_page_without_token_renders(lan_container):
+    app = create_app(lan_container)
+    client = TestClient(app, base_url="http://127.0.0.1:8787")
+    r = client.get("/login")
+    assert r.status_code == 200
+    assert "token" in r.text
+
+
+def test_lan_login_token_exchange_sets_cookie_and_clears_url(lan_container):
+    app = create_app(lan_container)
+    client = TestClient(app, base_url="http://127.0.0.1:8787")
+    r = client.get("/login?token=test-token-123", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "/"
+    assert "ddlhub_session" in r.cookies
+    # 带 cookie 后正常访问
+    assert client.get("/").status_code == 200
+
+
+def test_lan_login_wrong_token_no_cookie(lan_container):
+    app = create_app(lan_container)
+    client = TestClient(app, base_url="http://127.0.0.1:8787")
+    r = client.get("/login?token=wrong-token", follow_redirects=False)
+    assert r.status_code == 200  # 渲染提示页
+    assert "ddlhub_session" not in r.cookies
+    # 仍未认证 → 访问业务页继续重定向
+    assert client.get("/", follow_redirects=False).status_code == 302
+
+
+def test_lan_post_without_auth_still_401(lan_container):
+    app = create_app(lan_container)
+    client = TestClient(app, base_url="http://127.0.0.1:8787")
+    assert client.post("/api/assignments/1/action", data={"action": "done"}).status_code == 401
