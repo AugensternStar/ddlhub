@@ -92,6 +92,16 @@ class BaseAdapter(ABC):
     # 登录模式：credentials=账密可程序化登录；interactive=弹有头浏览器人工登录一次
     login_mode: ClassVar[str] = "credentials"
     login_entry_url: ClassVar[str] = ""  # interactive 模式的登录页
+    # —— interactive 模式的通用登录判定参数 ——
+    cookie_domain: ClassVar[str] = ""            # 平台会话 cookie 所属域，如 "unipus.cn"
+    login_cookie_hints: ClassVar[tuple[str, ...]] = ()  # 平台特征 cookie 名（可选辅助）
+    login_url_bad: ClassVar[tuple[str, ...]] = ("login", "signin", "passport")
+    login_url_ok: ClassVar[str] = ""             # 登录后 URL 必含的子串（空=不校验）
+
+    UA_DEFAULT: ClassVar[str] = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0"
+    )
 
     def __init__(self, ctx: AdapterContext):
         self.ctx = ctx
@@ -106,12 +116,92 @@ class BaseAdapter(ABC):
     def fetch_assignments(self, course: CourseDraft) -> list[AssignmentDraft]: ...
 
     def health_check(self) -> Health:
-        """用已存会话发轻量请求验证登录态；默认视为健康（无会话的平台自实现）。"""
+        """用已存会话发轻量请求验证登录态；默认视为健康（有会话的平台建议自实现）。"""
         return Health(ok=True)
 
-    def login_success(self, context, page) -> bool:
-        """有头浏览器人工登录完成判定（interactive 模式需实现）；由 core 轮询调用。"""
-        return False
+    def login_snapshot(self, context) -> set[str]:
+        """浏览器打开登录页后，快照平台域已有的 cookie 名（用于登录后 diff）。"""
+        names: set[str] = set()
+        if not self.cookie_domain:
+            return names
+        try:
+            for c in context.cookies():
+                if self.cookie_domain in (c.get("domain") or "") and c.get("name"):
+                    names.add(c["name"])
+        except Exception:
+            pass
+        return names
+
+    def generic_login_success(self, context, page, snapshot: set[str] | None = None) -> bool:
+        """通用登录完成判定（core 传入打开时的快照）：
+        平台域出现「新 cookie 名」或「特征 cookie」，且页面已离开登录页。"""
+        url = ""
+        try:
+            url = page.url or ""
+        except Exception:
+            pass
+        if any(bad in url for bad in self.login_url_bad):
+            return False
+        if self.login_url_ok and self.login_url_ok not in url:
+            return False
+        if not self.cookie_domain:
+            return False
+        try:
+            current: set[str] = set()
+            hinted = False
+            for c in context.cookies():
+                if self.cookie_domain not in (c.get("domain") or "") or not c.get("value"):
+                    continue
+                current.add(c["name"])
+                if c["name"] in self.login_cookie_hints:
+                    hinted = True
+            new_cookies = current - (snapshot or set())
+            return bool(new_cookies) or hinted
+        except Exception:
+            return False
+
+    def login_success(self, context, page, snapshot: set[str] | None = None) -> bool:
+        """有头浏览器人工登录完成判定（core 传入打开登录页时的 cookie 快照）。
+        默认用通用判定（快照 diff + 特征 cookie + 离开登录页）；平台可覆盖。"""
+        return self.generic_login_success(context, page, snapshot)
+
+    def _httpx_with_session(self, cookie_domain_filter: str | None = None):
+        """用已存（加密）会话构造带 cookie 的 httpx 客户端。"""
+        import httpx
+
+        state = self.ctx.sessions.load()
+        if not state or not state.get("cookies"):
+            return None
+        cookies = httpx.Cookies()
+        for c in state.get("cookies") or []:
+            dom = c.get("domain") or ""
+            if cookie_domain_filter and cookie_domain_filter not in dom:
+                continue
+            cookies.set(c["name"], c.get("value", ""), domain=dom or None,
+                        path=c.get("path") or "/")
+        return httpx.Client(
+            cookies=cookies,
+            headers={"User-Agent": self.UA_DEFAULT},
+            follow_redirects=True,
+            timeout=20,
+        )
+
+    def generic_health(self, portal_url: str) -> Health:
+        """通用健康检查：无会话 → need_relogin；门户 GET 跳回登录页 → need_relogin。"""
+        client = self._httpx_with_session()
+        if client is None:
+            return Health(ok=False, need_relogin=True,
+                          detail="无已保存会话，请先完成一次浏览器登录")
+        try:
+            r = client.get(portal_url)
+            final = str(r.url)
+            if any(bad in final for bad in self.login_url_bad):
+                return Health(ok=False, need_relogin=True, detail="会话已失效（跳回登录页）")
+            return Health(ok=True)
+        except Exception as exc:
+            return Health(ok=False, need_relogin=False, detail=f"网络异常：{exc}")
+        finally:
+            client.close()
 
     def relogin(self) -> LoginResult:
         """会话失效后的恢复。interactive 平台 → 打开浏览器人工登录；Mock 可即时恢复。"""

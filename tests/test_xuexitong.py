@@ -22,6 +22,28 @@ from ddlhub.core.sessions import SessionStore
 FIX = Path(__file__).parent / "fixtures" / "xuexitong"
 
 
+@pytest.fixture(scope="module")
+def local_login_url():
+    """本地 HTTP 服务：有头登录测试不依赖外网。"""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<html><body>login-sim</body></html>")
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{srv.server_port}/"
+    srv.shutdown()
+
+
 def _ctx(container, account_id) -> AdapterContext:
     return container.adapter_ctx(account_id)
 
@@ -219,20 +241,21 @@ def test_sync_passes_encrypted_sessions(container, db, mock_account, monkeypatch
     assert seen["sessions"].load()["cookies"][0]["value"] == "v"
 
 
-def test_interactive_manager_success(container, mock_account):
+def test_interactive_manager_success(container, mock_account, local_login_url):
     from ddlhub.adapters.base import BaseAdapter, Capability
 
     class FakeBrowserAdapter(BaseAdapter):
         name = "FakeBrowser"
         capabilities = Capability.INTERACTIVE
         login_mode = "interactive"
-        login_entry_url = "https://example.com"
+        login_entry_url = ""  # 由测试注入本地服务地址
 
         def login(self, cred): ...
         def fetch_courses(self): return []
         def fetch_assignments(self, course): return []
-        def login_success(self, context, page): return True  # 打开即视为登录完成
+        def login_success(self, context, page, snapshot=None): return True  # 打开即视为登录完成
 
+    FakeBrowserAdapter.login_entry_url = local_login_url
     mgr = InteractiveLoginManager(container, headless=True)
     mgr._run(mock_account, adapter_cls=FakeBrowserAdapter)
 
@@ -249,20 +272,21 @@ def test_interactive_manager_success(container, mock_account):
         assert s.exec(select(Course)).first() is not None
 
 
-def test_interactive_manager_timeout(container, mock_account):
+def test_interactive_manager_timeout(container, mock_account, local_login_url):
     from ddlhub.adapters.base import BaseAdapter, Capability
 
     class NeverLoginAdapter(BaseAdapter):
         name = "NeverLogin"
         capabilities = Capability.INTERACTIVE
         login_mode = "interactive"
-        login_entry_url = "https://example.com"
+        login_entry_url = ""  # 由测试注入本地服务地址
 
         def login(self, cred): ...
         def fetch_courses(self): return []
         def fetch_assignments(self, course): return []
-        def login_success(self, context, page): return False
+        def login_success(self, context, page, snapshot=None): return False
 
+    NeverLoginAdapter.login_entry_url = local_login_url
     mgr = InteractiveLoginManager(container, headless=True)
     mgr.TIMEOUT_S = 2  # 缩短等待
     mgr._run(mock_account, adapter_cls=NeverLoginAdapter)

@@ -88,11 +88,12 @@ class InteractiveLoginManager:
                     context = browser.new_context()  # 内存态：不写任何 profile 落盘
                     page = context.new_page()
                     page.goto(adapter.login_entry_url, timeout=30000)
+                    snapshot = adapter.login_snapshot(context)  # 登录前平台域 cookie 快照
                     deadline = time.time() + self.TIMEOUT_S
                     ok = False
                     while time.time() < deadline:
                         try:
-                            if adapter.login_success(context, page):
+                            if adapter.login_success(context, page, snapshot):
                                 ok = True
                                 break
                         except Exception:

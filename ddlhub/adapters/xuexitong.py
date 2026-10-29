@@ -169,8 +169,8 @@ class XuexitongAdapter(BaseAdapter):
             message="学习通需在弹出的浏览器中完成一次账密登录（含可能的验证码/扫码），会话将加密保存并长期复用",
         )
 
-    def login_success(self, context, page) -> bool:
-        """core 轮询调用：出现登录票据 cookie vc3 即视为登录成功。"""
+    def login_success(self, context, page, snapshot=None) -> bool:
+        """core 轮询调用：出现登录票据 cookie vc3 即视为登录成功（覆盖通用判定）。"""
         for cookie in context.cookies():
             if cookie.get("name") == "vc3" and "chaoxing.com" in (cookie.get("domain") or ""):
                 return True
