@@ -69,7 +69,7 @@ flowchart LR
 
 | 项 | 方案 |
 |---|---|
-| 密码 | 系统钥匙串（Windows Credential Manager）；启动时断言后端白名单，**拒绝任何明文后端**；跨平台兜底 = 主密码 vault 模式（Argon2id + AES-256-GCM） |
+| 密码 | 系统钥匙串（Windows Credential Manager）；启动时断言后端白名单，**拒绝任何明文后端**；跨平台兜底 = 主密码 vault 模式（Argon2id + AES-256-GCM，主密码仅在启动时交互输入、不落盘；因此 vault 模式需交互终端、不适合开机自启——Windows 用户请保持默认钥匙串模式） |
 | 会话 | 登录票据（cookie/storage_state）AES-256-GCM 加密落库；有头登录用内存态浏览器上下文，磁盘无明文 |
 | 日志 | 全局 Formatter 正则清洗 `password/token/cookie=… → ******`；异常入库前过 `redact()` |
 | Web | 默认只监听 127.0.0.1；Host 白名单反 DNS rebinding；非 GET 校验 Origin/Sec-Fetch-Site；会话 cookie（HttpOnly SameSite=Strict）鉴权。LAN 模式（`DDLHUB_LISTEN=lan`）为明文 HTTP + 令牌交换，仅限家庭可信网络 |

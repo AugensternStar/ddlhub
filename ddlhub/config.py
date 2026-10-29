@@ -23,7 +23,6 @@ class Settings:
     min_interval_min: int = 10
     reminder_offsets: tuple[int, ...] = DEFAULT_OFFSETS
     vault_mode: bool = False
-    master_password: str = ""
     token: str = ""
     smtp_host: str = ""
     smtp_port: int = 465
@@ -87,7 +86,6 @@ class Settings:
             min_interval_min=min_interval,
             reminder_offsets=offsets,
             vault_mode=os.getenv("DDLHUB_VAULT_MODE", "0") == "1",
-            master_password=os.getenv("DDLHUB_MASTER_PASSWORD", ""),
             token=token,
             smtp_host=os.getenv("DDLHUB_SMTP_HOST", ""),
             smtp_port=_int_env("DDLHUB_SMTP_PORT", 465),

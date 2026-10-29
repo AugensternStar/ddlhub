@@ -33,15 +33,22 @@ logger = logging.getLogger("ddlhub")
 
 def _credential_store(settings: Settings, db: Database):
     if settings.vault_mode:
-        sealed = get_setting(db, "vault")
+        import getpass
+
+        sealed = get_setting(db, "vault", None)
         try:
             if sealed:
-                store = VaultStore.open(settings.master_password, base64.b64decode(sealed))
+                mp = getpass.getpass("DDLHub vault 主密码: ")
+                store = VaultStore.open(mp, base64.b64decode(sealed))
                 logger.info("已用主密码解锁 vault")
             else:
-                if not settings.master_password:
-                    raise SystemExit("vault 模式首次使用需先设置 DDLHUB_MASTER_PASSWORD")
-                store = VaultStore.create(settings.master_password)
+                print("[DDLHub] 首次使用 vault 模式：主密码仅用于本机加解密、不落盘；")
+                print("         丢失主密码将无法恢复已存凭据，请牢记。")
+                mp = getpass.getpass("设置 vault 主密码: ")
+                mp2 = getpass.getpass("确认 vault 主密码: ")
+                if not mp or mp != mp2:
+                    raise SystemExit("两次输入为空或不一致，未创建 vault")
+                store = VaultStore.create(mp)
                 set_setting(db, "vault", base64.b64encode(store.seal()).decode())
                 logger.info("已创建主密码 vault")
             return store

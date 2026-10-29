@@ -40,7 +40,7 @@ def assert_secure_backend() -> str:
         raise SystemExit(
             f"[DDLHub] 检测到不安全或不可用的 keyring 后端：{q}\n"
             "拒绝以明文存储凭据。跨平台/无桌面环境请改用主密码模式：\n"
-            "  DDLHUB_VAULT_MODE=1 + DDLHUB_MASTER_PASSWORD=...（见 .env.example）"
+            "  DDLHUB_VAULT_MODE=1（启动时在终端交互输入主密码，不落盘）"
         )
     return q
 
