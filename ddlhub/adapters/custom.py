@@ -55,7 +55,9 @@ class CustomAdapter(BaseAdapter):
 
     @property
     def login_cookie_hints(self) -> tuple[str, ...]:  # type: ignore[override]
-        return tuple(self.ctx.config or {}).get("login_cookie_hints", ())
+        # 审计 03：此前 tuple(...).get 抛 AttributeError，登录判定恒 False
+        hints = (self.ctx.config or {}).get("login_cookie_hints", ())
+        return tuple(hints)
 
     @property
     def login_url_bad(self) -> tuple[str, ...]:  # type: ignore[override]

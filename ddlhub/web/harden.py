@@ -76,7 +76,9 @@ class HardenMiddleware(BaseHTTPMiddleware):
         gated = self.container.settings.lan or self.container.settings.local_token
         if gated and not authed and not path.startswith("/static") and path != "/login":
             if safe:
-                return RedirectResponse("/login", status_code=302)
+                # 审计 04：保留完整 query——`/?token=xxx` 才能一路完成令牌交换
+                target = "/login" + ("?" + request.url.query if request.url.query else "")
+                return RedirectResponse(target, status_code=302)
             return PlainTextResponse("unauthorized", status_code=401)
 
         response = await call_next(request)

@@ -132,6 +132,7 @@ class NotificationLog(SQLModel, table=True):
     summary: str = Field(default="", max_length=1000)
     error: str = Field(default="", max_length=1000)
     sent_at: Optional[NaiveDatetime] = None
+    claimed_at: Optional[NaiveDatetime] = None  # 审计 07：原子领取时间
     created_at: NaiveDatetime
 
 

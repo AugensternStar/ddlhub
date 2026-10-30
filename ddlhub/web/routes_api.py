@@ -47,7 +47,7 @@ def assignment_action(aid: int, request: Request, action: str = Form(...)):
         elif action == "unignore":
             a.local_ignored = False
         elif action in ("pin", "unpin"):
-            a.pinned = not a.pinned
+            a.pinned = action == "pin"  # 审计 11：幂等，重复请求结果不变
         else:
             return PlainTextResponse("bad action", status_code=400)
         course = s.get(Course, a.course_id)
@@ -154,17 +154,30 @@ def create_account(
 @router.post("/api/accounts/{aid}/delete")
 def delete_account(aid: int, request: Request):
     c = container_of(request)
+    # 审计 09：先删钥匙串（失败则中止，账号与数据保留，可重试）；成功后再清库
     with c.db.session() as s:
         account = s.get(Account, aid)
         if account is None:
             return RedirectResponse("/", status_code=303)
         adapter_key, account_uuid, label = account.adapter_key, account.uuid, account.label
-        s.delete(account)  # 课程/作业/会话/同步记录由外键级联删除
-        s.commit()
+        assignment_ids = list(s.exec(
+            select(Assignment.id).where(Assignment.account_id == aid)
+        ).all())
     try:
         c.credential_store.delete(adapter_key, account_uuid)
     except Exception:
         c.logger.exception("credential delete failed for %s", label)
+        return RedirectResponse(
+            "/?msg=" + quote("凭据删除失败（钥匙串），账号未删除；请重试"), status_code=303)
+    with c.db.session() as s:
+        # 取消该账号作业的全部待发/失败通知（避免删除后仍发送残留摘要）
+        for nrow in s.exec(select(NotificationLog).where(
+                NotificationLog.assignment_id.in_(assignment_ids))).all() if assignment_ids else []:
+            s.delete(nrow)
+        account = s.get(Account, aid)
+        if account is not None:
+            s.delete(account)  # 课程/作业/会话/同步记录由外键级联删除
+        s.commit()
     c.logger.info("account deleted: %s（凭据与全部数据已清除）", label)
     return RedirectResponse("/?msg=" + quote("账号已删除，凭据与数据已清除"), status_code=303)
 

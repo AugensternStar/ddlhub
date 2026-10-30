@@ -40,6 +40,9 @@ def _credential_store(settings: Settings, db: Database):
             if sealed:
                 mp = getpass.getpass("DDLHub vault 主密码: ")
                 store = VaultStore.open(mp, base64.b64decode(sealed))
+                store.set_persist_callback(
+                    lambda blob: set_setting(db, "vault", base64.b64encode(blob).decode())
+                )
                 logger.info("已用主密码解锁 vault")
             else:
                 print("[DDLHub] 首次使用 vault 模式：主密码仅用于本机加解密、不落盘；")
@@ -49,6 +52,9 @@ def _credential_store(settings: Settings, db: Database):
                 if not mp or mp != mp2:
                     raise SystemExit("两次输入为空或不一致，未创建 vault")
                 store = VaultStore.create(mp)
+                store.set_persist_callback(
+                    lambda blob: set_setting(db, "vault", base64.b64encode(blob).decode())
+                )
                 set_setting(db, "vault", base64.b64encode(store.seal()).decode())
                 logger.info("已创建主密码 vault")
             return store

@@ -55,20 +55,45 @@ class Settings:
                 return DEFAULT_OFFSETS
             try:
                 vals = {int(x) for x in raw.split(",") if x.strip()}
-                if not vals:
-                    raise ValueError("empty")
-                return tuple(sorted(vals, reverse=True))
             except ValueError:
                 print(f"[警告] DDLHUB_REMINDER_OFFSETS={raw!r} 格式非法，使用默认档位")
                 return DEFAULT_OFFSETS
+            # 审计 12：只接受 1..44640 分钟（1 分钟~31 天）的正数档位
+            valid = {v for v in vals if 1 <= v <= 44640}
+            if not valid:
+                print(f"[警告] DDLHUB_REMINDER_OFFSETS={raw!r} 无有效档位，使用默认")
+                return DEFAULT_OFFSETS
+            if valid != vals:
+                print(f"[警告] 已忽略非法档位 {sorted(vals - valid)}（须为 1~44640 的正整数）")
+            return tuple(sorted(valid, reverse=True))
 
         port = _int_env("DDLHUB_PORT", 8787)
+        if not (1 <= port <= 65535):
+            print(f"[警告] DDLHUB_PORT={port} 超出 1~65535，使用默认 8787")
+            port = 8787
         listen = os.getenv("DDLHUB_LISTEN", "local").strip().lower()
         min_interval = max(10, _int_env("DDLHUB_MIN_INTERVAL_MIN", 10))  # 红线钳制
         offsets = _offsets_env()
-        sync_times = tuple(
+        # 审计 12：同步时刻必须是合法 HH:MM（00-23:00-59），否则回退默认
+        import re as _re
+
+        times_raw = tuple(
             t.strip() for t in os.getenv("DDLHUB_SYNC_TIMES", "08:00,21:00").split(",") if t.strip()
-        ) or ("08:00", "21:00")
+        )
+        sync_times = tuple(t for t in times_raw if _re.fullmatch(r"([01]\d|2[0-3]):([0-5]\d)", t))
+        if sync_times != times_raw:
+            bad = [t for t in times_raw if t not in sync_times]
+            print(f"[警告] DDLHUB_SYNC_TIMES 含非法时刻 {bad}，已忽略")
+        if not sync_times:
+            sync_times = ("08:00", "21:00")
+        timezone = os.getenv("DDLHUB_TIMEZONE", "Asia/Shanghai")
+        try:
+            from zoneinfo import ZoneInfo as _ZI
+
+            _ZI(timezone)
+        except Exception:
+            print(f"[警告] DDLHUB_TIMEZONE={timezone!r} 不可识别，使用 Asia/Shanghai")
+            timezone = "Asia/Shanghai"
         data_dir = Path(os.getenv("DDLHUB_DATA_DIR", "data")).expanduser()
         if not data_dir.is_absolute():
             data_dir = (base_dir / data_dir).resolve()
@@ -82,7 +107,7 @@ class Settings:
         return cls(
             port=port,
             listen=listen,
-            timezone=os.getenv("DDLHUB_TIMEZONE", "Asia/Shanghai"),
+            timezone=timezone,
             data_dir=data_dir,
             sync_times=sync_times,
             min_interval_min=min_interval,

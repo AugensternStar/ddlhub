@@ -107,6 +107,8 @@ class VaultStore:
     def __init__(self, master_password: str, blob: bytes | None, salt: bytes | None):
         self._key = self._derive(master_password, salt or b"")
         self._data: dict[str, dict[str, str]] = {}
+        self._salt = salt or secrets.token_bytes(self.SALT_LEN)
+        self._on_change = None
         if blob:
             self._data = json.loads(decrypt_blob(self._key, blob))
 
@@ -127,6 +129,7 @@ class VaultStore:
         store._key = VaultStore._derive(master_password, salt)
         store._data = {}
         store._salt = salt
+        store._on_change = None
         return store
 
     def seal(self) -> bytes:
@@ -140,17 +143,32 @@ class VaultStore:
         store._salt, payload = sealed[: VaultStore.SALT_LEN], sealed[VaultStore.SALT_LEN:]
         store._key = VaultStore._derive(master_password, store._salt)
         store._data = json.loads(decrypt_blob(store._key, payload))
+        store._on_change = None
         return store
+
+    def set_persist_callback(self, callback) -> None:
+        """审计 01：每次增删凭据后自动落盘（回调写 app_setting 'vault'）。
+
+        回调抛出的异常会向上传播——调用方不得在持久化失败时报告成功。
+        """
+        self._on_change = callback
+
+    def _persist(self) -> None:
+        if self._on_change is not None:
+            self._on_change(self.seal())
 
     def store(self, adapter_key, account_uuid, username, password) -> None:
         self._data[f"{adapter_key}/{account_uuid}"] = {"u": username, "p": password}
+        self._persist()
 
     def load(self, adapter_key, account_uuid) -> tuple[str, str] | None:
         item = self._data.get(f"{adapter_key}/{account_uuid}")
         return (item["u"], item["p"]) if item else None
 
     def delete(self, adapter_key, account_uuid) -> None:
-        self._data.pop(f"{adapter_key}/{account_uuid}", None)
+        removed = self._data.pop(f"{adapter_key}/{account_uuid}", None)
+        if removed is not None:
+            self._persist()
 
     def kek(self) -> bytes:
         """vault 模式下用主密码派生密钥兼作会话加密 KEK（salt 持久化，密钥稳定）。"""

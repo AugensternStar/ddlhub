@@ -94,8 +94,10 @@ def _rows(container, *, account_id, course_id, status_f, days7) -> list[Row]:
         if course_id:
             stmt = stmt.where(Assignment.course_id == course_id)
         if days7:
+            # 审计 10：加下界——逾期作业不属于"未来 7 天"
             stmt = stmt.where(
                 Assignment.due_at.is_not(None),
+                Assignment.due_at >= now,
                 Assignment.due_at <= now + timedelta(days=7),
             )
         assignments = s.exec(stmt).all()

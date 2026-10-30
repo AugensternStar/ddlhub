@@ -12,7 +12,7 @@
 | Python 源码 | ≈ 5,075 行（core 1,600 / adapters 870 / tests 1,578 / web 路由 695 / 入口+配置 217 / notify 145） |
 | 前端（自研部分） | ≈ 540 行（Jinja2 模板 290 + CSS/JS 249）；htmx 与 FullCalendar 为 vendored 第三方 |
 | 数据库迁移 | 3 个（001 建库 / 002 课程开关 / 003 账号配置） |
-| 测试 | 94 个用例，全绿（pytest） |
+| 测试 | 113 个用例，全绿（pytest） |
 | 平台适配器 | 6 个（学习通已全量校准；大学慕课/智慧树/U校园/iWrite 登录已通；自定义平台；测试桩 1 个仅测试进程） |
 | 通知渠道 | 桌面 Toast（winotify）+ SMTP 邮件；渠道层可插拔 |
 | 运行形态 | 单进程常驻（Uvicorn + APScheduler 线程池），默认仅监听 127.0.0.1:8787 |

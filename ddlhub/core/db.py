@@ -1,6 +1,13 @@
-"""SQLite：engine/session、WAL、schema_version + migrations 顺序执行（不使用 Alembic）。"""
+"""SQLite：engine/session、WAL、schema_version + migrations 顺序执行（不使用 Alembic）。
+
+迁移执行（审计 08）：独立裸连接 + 显式 BEGIN IMMEDIATE 事务——pysqlite 缺省模式会在
+DDL 前隐式提交，SQLAlchemy begin() 保护不了 DDL；此处手动管理事务保证「失败整体回滚」。
+任一待应用迁移执行前，自动生成 data/backups/pre-migration-*.db 备份（SQLite backup API）。
+"""
 from __future__ import annotations
 
+import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import event
@@ -66,29 +73,58 @@ class Database:
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA journal_mode=WAL")
         cur.execute("PRAGMA foreign_keys=ON")
-        cur.execute("PRAGMA busy_timeout=15000")  # 与 connect timeout 对齐（R-P3）
+        cur.execute("PRAGMA busy_timeout=15000")
         cur.close()
 
+    def _backup(self, raw: sqlite3.Connection) -> Path:
+        """审计 08：迁移前用 SQLite backup API 生成一致快照（含 WAL 内容）。"""
+        backup_dir = self.path.parent / "backups"
+        backup_dir.mkdir(exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dest_path = backup_dir / f"pre-migration-{stamp}.db"
+        with sqlite3.connect(dest_path) as dst:
+            raw.backup(dst)
+        return dest_path
+
     def migrate(self) -> list[int]:
-        """按文件名前缀顺序执行未应用的 NNN_*.sql，返回本次应用的版本号。"""
+        """按文件名前缀顺序执行未应用的 NNN_*.sql（显式事务，失败整体回滚）。"""
         applied_now: list[int] = []
-        with self.engine.begin() as conn:
-            conn.exec_driver_sql(
+        raw = sqlite3.connect(self.path, timeout=30)
+        try:
+            raw.execute(
                 "CREATE TABLE IF NOT EXISTS schema_version ("
                 "version INTEGER PRIMARY KEY, "
                 "applied_at TEXT NOT NULL DEFAULT (datetime('now')))"
             )
-            done = {r[0] for r in conn.exec_driver_sql("SELECT version FROM schema_version").fetchall()}
-            for path in sorted(self.migrations_dir.glob("[0-9][0-9][0-9]_*.sql")):
-                version = int(path.name.split("_", 1)[0])
-                if version in done:
-                    continue
-                for stmt in _split_sql(path.read_text(encoding="utf-8")):
-                    conn.exec_driver_sql(stmt)
-                conn.exec_driver_sql(
-                    "INSERT INTO schema_version (version) VALUES (?)", (version,)
-                )
-                applied_now.append(version)
+            done = {r[0] for r in raw.execute("SELECT version FROM schema_version").fetchall()}
+            pending: list[tuple[Path, int, str]] = []
+            if self.migrations_dir.exists():
+                for path in sorted(self.migrations_dir.glob("[0-9][0-9][0-9]_*.sql")):
+                    version = int(path.name.split("_", 1)[0])
+                    if version in done:
+                        continue
+                    pending.append((path, version, path.read_text(encoding="utf-8")))
+
+            if pending:
+                backup_path = self._backup(raw)
+                raw.execute("BEGIN IMMEDIATE")
+                try:
+                    for path, version, sql in pending:
+                        for stmt in _split_sql(sql):
+                            raw.execute(stmt)
+                        raw.execute(
+                            "INSERT INTO schema_version (version) VALUES (?)", (version,)
+                        )
+                        applied_now.append(version)
+                    raw.execute("COMMIT")
+                except Exception as exc:
+                    raw.execute("ROLLBACK")
+                    raise SystemExit(
+                        f"[DDLHub] 迁移失败已整体回滚（数据库未改动）；"
+                        f"升级前备份：{backup_path}。错误：{exc}"
+                    ) from exc
+        finally:
+            raw.close()
         return applied_now
 
     def session(self) -> Session:
