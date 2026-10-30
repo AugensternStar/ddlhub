@@ -14,7 +14,6 @@ from ddlhub.core.db import Database
 from ddlhub.core.models import Account, Assignment, SyncRun
 from ddlhub.core.normalize import now_utc
 from ddlhub.core.runtime import Container
-from ddlhub.core.security import KeyringStore
 from ddlhub.core.sync import sync_account
 from tests.test_harden import lan_container  # noqa: F401  复用 LAN fixture
 from ddlhub.web.main import create_app
@@ -44,11 +43,11 @@ def test_docs_hidden_in_lan(lan_container):
 
 
 @pytest.fixture
-def local_token_container(settings, db, fake_notifier):
+def local_token_container(settings, db, fake_notifier, credential_store):
     lt_settings = replace(settings, local_token=True, token="local-token-9")
     return Container(
         settings=lt_settings, db=db, logger=logging.getLogger("test"),
-        session_secret="test-secret", credential_store=KeyringStore(),
+        session_secret="test-secret", credential_store=credential_store,
         kek=bytes(32), channel_override={"desktop": fake_notifier},
     )
 

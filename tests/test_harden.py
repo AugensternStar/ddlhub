@@ -6,7 +6,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ddlhub.core.runtime import Container
-from ddlhub.core.security import KeyringStore
 from ddlhub.web.main import create_app
 
 
@@ -69,7 +68,7 @@ def test_non_browser_client_without_origin_allowed(client):
 # ---------- LAN 模式：/login 令牌交换（体检发现的路由缺失回归） ----------
 
 @pytest.fixture
-def lan_container(settings, db, fake_notifier):
+def lan_container(settings, db, fake_notifier, credential_store):
     from dataclasses import replace
 
     from ddlhub.core.runtime import Container
@@ -77,7 +76,7 @@ def lan_container(settings, db, fake_notifier):
     lan_settings = replace(settings, listen="lan", token="test-token-123")
     return Container(
         settings=lan_settings, db=db, logger=logging.getLogger("test"),
-        session_secret="test-secret", credential_store=KeyringStore(),
+        session_secret="test-secret", credential_store=credential_store,
         kek=bytes(32), channel_override={"desktop": fake_notifier},
     )
 

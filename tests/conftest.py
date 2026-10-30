@@ -13,8 +13,8 @@ from ddlhub.core.db import Database
 from ddlhub.core.models import Account
 from ddlhub.core.normalize import now_utc
 from ddlhub.core.runtime import Container
-from ddlhub.core.security import KeyringStore
 from ddlhub.notify.base import NotifierBase, SendResult
+from tests.fakes import FakeCredentialStore
 
 
 class FakeNotifier(NotifierBase):
@@ -56,13 +56,19 @@ def fake_notifier() -> FakeNotifier:
 
 
 @pytest.fixture
-def container(settings, db, fake_notifier) -> Container:
+def credential_store() -> FakeCredentialStore:
+    """内存凭据桩：测试不触碰宿主钥匙串（CI 无可用后端会抛 NoKeyringError）。"""
+    return FakeCredentialStore()
+
+
+@pytest.fixture
+def container(settings, db, fake_notifier, credential_store) -> Container:
     return Container(
         settings=settings,
         db=db,
         logger=logging.getLogger("test"),
         session_secret="test-secret",
-        credential_store=KeyringStore(),
+        credential_store=credential_store,
         kek=bytes(32),  # 测试固定 KEK，不触碰用户钥匙串
         channel_override={"desktop": fake_notifier},
     )
