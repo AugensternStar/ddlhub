@@ -20,7 +20,7 @@
       {% if a.status == 'need_relogin' %}
       <button class="btn sm warn" hx-post="/api/accounts/{{ a.id }}/interactive-login"
               hx-target="#statusbar" hx-swap="outerHTML"
-              onclick="pollLoginStatus({{ a.id }})">打开浏览器登录</button>
+              data-poll-account="{{ a.id }}">打开浏览器登录</button>
       {% else %}
       <button class="btn sm" hx-post="/api/sync" hx-vals='{"account_id": {{ a.id }}}'
               hx-target="#statusbar" hx-swap="outerHTML">同步</button>

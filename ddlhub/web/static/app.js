@@ -58,3 +58,42 @@ window.pollLoginStatus = function (accountId) {
   }, 2000);
 };
 
+/* CSP 友好：内联事件处理器全部迁移到这里的事件委托（审计修复） */
+(function () {
+  function ready(fn) {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", fn);
+    } else {
+      fn();
+    }
+  }
+
+  ready(function () {
+    // 筛选器：select / checkbox 变化即提交表单（原 onchange 内联）
+    document.addEventListener("change", function (e) {
+      var el = e.target;
+      if (el.matches(".filters select, .filters input[type='checkbox']") && el.form) {
+        el.form.submit();
+      }
+      if (el.id === "adapter-select") {
+        var extra = document.getElementById("custom-extra");
+        if (extra) extra.style.display = el.value === "custom" ? "flex" : "none";
+      }
+    });
+
+    // 删除账号：确认框（原 onsubmit 内联）
+    document.addEventListener("submit", function (e) {
+      var form = e.target;
+      if (form.matches("form.confirm-delete") &&
+          !window.confirm(form.getAttribute("data-confirm") || "确定？")) {
+        e.preventDefault();
+      }
+    });
+
+    // 有头登录按钮：点击后开始轮询（原 onclick 内联）
+    document.addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-poll-account]");
+      if (btn) window.pollLoginStatus(btn.getAttribute("data-poll-account"));
+    });
+  });
+})();

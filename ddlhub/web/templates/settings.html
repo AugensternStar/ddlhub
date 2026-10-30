@@ -17,24 +17,24 @@
     {% if a.status == 'need_relogin' %}
     <button class="btn sm warn" hx-post="/api/accounts/{{ a.id }}/interactive-login"
             hx-target="#statusbar" hx-swap="outerHTML"
-            onclick="pollLoginStatus({{ a.id }})">打开浏览器登录</button>
+            data-poll-account="{{ a.id }}">打开浏览器登录</button>
     {% else %}
     <button class="btn sm" hx-post="/api/sync" hx-vals='{"account_id": {{ a.id }}}'
             hx-target="#statusbar" hx-swap="outerHTML">同步</button>
     {% endif %}
-    <form method="post" action="/api/accounts/{{ a.id }}/delete" class="inline"
-          onsubmit="return confirm('删除账号「{{ a.label }}」将同时删除其全部课程/作业/凭据，确定？')">
+    <form method="post" action="/api/accounts/{{ a.id }}/delete" class="inline confirm-delete"
+          data-confirm="删除账号「{{ a.label }}」将同时删除其全部课程/作业/凭据，确定？">
       <button class="btn sm danger">删除</button>
     </form>
   </div>
   {% else %}
-  <div class="empty small">还没有接入任何平台。用下方表单添加第一个；想离线体验可选「演示平台 (Mock)」，账号密码随意填。</div>
+  <div class="empty small">还没有接入任何平台。用下方表单添加第一个（学习通 / 中国大学MOOC / 智慧树 / U校园 / iWrite / 自定义平台）。</div>
   {% endfor %}
 
   <details class="addaccount" {% if not accounts %}open{% endif %}>
     <summary>＋ 添加平台</summary>
     <form method="post" action="/api/accounts" class="addform">
-      <select name="adapter_key" onchange="document.getElementById('custom-extra').style.display = this.value==='custom' ? 'flex':'none'">
+      <select name="adapter_key" id="adapter-select">
         {% for k, name in adapters %}<option value="{{ k }}">{{ name }}</option>{% endfor %}
       </select>
       <input name="label" placeholder="备注名（如：我的学号）" required>
