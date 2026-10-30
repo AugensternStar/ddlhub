@@ -7,5 +7,6 @@ if [ ! -d .venv ]; then
     python3 -m venv .venv
 fi
 .venv/bin/python -m pip install --upgrade pip -q
-.venv/bin/python -m pip install -e . -q
+.venv/bin/python -m pip install -e ".[real-adapters]" -q
+.venv/bin/python -m playwright install chromium || echo "[DDLHub] chromium install skipped"
 exec .venv/bin/python -m ddlhub

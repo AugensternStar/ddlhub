@@ -10,7 +10,9 @@ if not exist .venv (
 )
 echo [DDLHub] Installing dependencies (first run takes 1-2 min, keep this window open)...
 .venv\Scripts\python -m pip install --upgrade pip -q || goto :err
-.venv\Scripts\python -m pip install -e . -q || goto :err
+.venv\Scripts\python -m pip install -e ".[real-adapters]" -q || goto :err
+echo [DDLHub] Ensuring Chromium for real-platform logins...
+.venv\Scripts\python -m playwright install chromium || echo [DDLHub] Chromium install skipped (will retry when needed)
 echo [DDLHub] Starting server. Browser will open automatically at http://127.0.0.1:8787
 echo [DDLHub] Keep this window open. Press Ctrl+C here to stop the server.
 .venv\Scripts\python -m ddlhub
