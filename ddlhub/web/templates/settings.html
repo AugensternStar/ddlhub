@@ -10,7 +10,11 @@
 
   {% for a in accounts %}
   <div class="account-chip">
-    <span class="name">{{ a.label }}</span>
+    <form method="post" action="/api/accounts/{{ a.id }}/rename" class="inline rename-form">
+      <input name="label" value="{{ a.label }}" maxlength="128" required
+             aria-label="平台备注名（可直接修改后保存）" class="rename-input">
+      <button class="btn sm ghost" title="保存新备注名">✏️</button>
+    </form>
     <span class="badge {{ 'ok' if a.status == 'ok' else ('warn' if a.status == 'need_relogin' else 'muted') }}">
       {{ a.status_text }}</span>
     <span class="lastok">{{ a.last_ok }}</span>

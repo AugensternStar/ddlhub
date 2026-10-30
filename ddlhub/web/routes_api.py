@@ -151,6 +151,24 @@ def create_account(
     return RedirectResponse("/?msg=" + quote(f"账号已创建。{outcome.message}"), status_code=303)
 
 
+@router.post("/api/accounts/{aid}/rename")
+def rename_account(aid: int, request: Request, label: str = Form(...)):
+    """修改平台备注名（仅展示用字段；凭据/会话按 account.uuid 关联，不受影响）。"""
+    c = container_of(request)
+    label = label.strip()[:128]
+    if not label:
+        return RedirectResponse("/settings?msg=" + quote("备注名不能为空"), status_code=303)
+    with c.db.session() as s:
+        account = s.get(Account, aid)
+        if account is None:
+            return RedirectResponse("/settings?msg=" + quote("账号不存在"), status_code=303)
+        old = account.label
+        account.label = label
+        s.commit()
+    c.logger.info("account renamed: %s -> %s", old, label)
+    return RedirectResponse("/settings?msg=" + quote(f"备注名已修改：{old} → {label}"), status_code=303)
+
+
 @router.post("/api/accounts/{aid}/delete")
 def delete_account(aid: int, request: Request):
     c = container_of(request)
